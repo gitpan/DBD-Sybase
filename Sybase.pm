@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.12 1998/11/17 16:11:06 mpeppler Exp $
+# $Id: Sybase.pm,v 1.13 1998/11/23 16:45:32 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.12';
-    my $Revision = substr(q$Revision: 1.12 $, 10);
+    $VERSION = '0.13';
+    my $Revision = substr(q$Revision: 1.13 $, 10);
 
     require_version DBI 1.02;
 
@@ -67,6 +67,10 @@
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth) or return undef;
 
+	if($server =~ /database=(\w+)/) {
+	    $this->do("use $1");
+	}
+
 	$this;
     }
 }
@@ -106,14 +110,14 @@
 
     sub do {
 	my($dbh, $statement, $attr, @params) = @_;
+
 	my $sth = $dbh->prepare($statement, $attr) or return undef;
 	$sth->execute(@params) or return undef;
 	my $rows = $sth->rows;
-#	print STDERR "$rows $sth->{syb_more_results}\n";
 	if(defined($sth->{syb_more_results})) {
 	    do {
 		while(my $dat = $sth->fetch) {
-		    # do something intelligent here...
+		    # XXX do something intelligent here...
 		}
 	    } while($sth->{syb_more_results});
 	}
@@ -219,6 +223,29 @@ It is sometimes necessary (or beneficial) to specify other connection
 properties. Currently the following are supported:
 
 =over 4
+
+=item server
+
+Specify the server that we should connect to
+
+     $dbh = DBI->connect("dbi:Sybase:server=BILLING",
+			 $user, $passwd);
+
+The default server is I<SYBASE>, or the value of the I<$DSQUERY> environment
+variable, if it is set.
+
+=item database
+
+Specify the database that should be made the default database.
+
+     $dbh = DBI->connect("dbi:Sybase:database=sybsystemprocs",
+			 $user, $passwd);
+
+This is equivalent to 
+
+    $dbh = DBI->connect('dbi:Sybase', $user, $passwd);
+    $dbh->do("use sybsystemprocs");
+
 
 =item charset
 

@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.11 1998/11/17 16:11:35 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.12 1998/11/23 16:46:35 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -398,7 +398,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
-    imp_dbh->connection = syb_db_connect(imp_dbh);
+    if((imp_dbh->connection = syb_db_connect(imp_dbh)) == NULL)
+	return 0;
 
     /* AutoCommit is ON by default */
     DBIc_set(imp_dbh,DBIcf_AutoCommit, 1);
@@ -970,7 +971,9 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
     if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
-	imp_sth->connection = syb_db_connect(imp_dbh);
+	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL) {
+	    return 0;
+	}
     }
 
     if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
@@ -1364,14 +1367,14 @@ syb_st_fetch(sth, imp_sth)
     av = DBIS->get_fbav(imp_sth);
     num_fields = AvFILL(av)+1;
     if(num_fields < imp_sth->numCols) {
-	int readonly = SvREADONLY(av);
-	if(readonly)
+	int isReadonly = SvREADONLY(av);
+	if(isReadonly)
 	    SvREADONLY_off(av);		/* DBI sets this readonly  */
 	i = imp_sth->numCols - 1;
 	while(i >= num_fields)
 	    av_store(av, i--, newSV(0));
 	num_fields = AvFILL(av)+1;
-	if(readonly)
+	if(isReadonly)
 	    SvREADONLY_on(av);		/* protect against shift @$row etc */
     }
 
@@ -1777,8 +1780,37 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     /* Here we set phs->sv_buf, and value_len.                */
     if (SvOK(phs->sv)) {
         phs->sv_buf = SvPV(phs->sv, value_len);
-    }
-    else {      /* it's null but point to buffer incase it's an out var */
+
+	/* determine the value, and length that we wish to pass to
+	   ct_param() */
+	switch(phs->datafmt.datatype) {
+	case CS_INT_TYPE:
+	case CS_SMALLINT_TYPE:
+	case CS_TINYINT_TYPE:
+	case CS_BIT_TYPE:
+	    phs->datafmt.datatype = CS_INT_TYPE;
+	    i_value = atoi(phs->sv_buf);
+	    value = &i_value;
+	    value_len = 4;
+	    break;
+	case CS_REAL_TYPE:
+	case CS_FLOAT_TYPE:
+	case CS_NUMERIC_TYPE:
+	case CS_DECIMAL_TYPE:
+	case CS_MONEY_TYPE:
+	case CS_MONEY4_TYPE:
+	    phs->datafmt.datatype = CS_FLOAT_TYPE;
+	    d_value = atof(phs->sv_buf);
+	    value = &d_value;
+	    value_len = sizeof(double);
+	    break;
+	default:
+	    phs->datafmt.datatype = CS_CHAR_TYPE;
+	    value = phs->sv_buf;
+	    value_len = CS_NULLTERM;
+	    break;
+	}
+    } else {      /* it's null but point to buffer incase it's an out var */
         phs->sv_buf = SvPVX(phs->sv);
         value_len   = 0;
     }
@@ -1789,37 +1821,6 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     if (dbis->debug >= 3) {
         fprintf(DBILOGFP, "bind %s <== '%.100s' (size %d, ok %d)\n",
             phs->name, phs->sv_buf, (long)phs->maxlen, SvOK(phs->sv)?1:0);
-    }
-
-    /* ----------------------------------------------------------------	*/
-
-
-    switch(phs->datafmt.datatype) {
-    case CS_INT_TYPE:
-    case CS_SMALLINT_TYPE:
-    case CS_TINYINT_TYPE:
-    case CS_BIT_TYPE:
-	phs->datafmt.datatype = CS_INT_TYPE;
-	i_value = atoi(phs->sv_buf);
-	value = &i_value;
-	value_len = 4;
-	break;
-    case CS_REAL_TYPE:
-    case CS_FLOAT_TYPE:
-    case CS_NUMERIC_TYPE:
-    case CS_DECIMAL_TYPE:
-    case CS_MONEY_TYPE:
-    case CS_MONEY4_TYPE:
-	phs->datafmt.datatype = CS_FLOAT_TYPE;
-	d_value = atof(phs->sv_buf);
-	value = &d_value;
-	value_len = sizeof(double);
-	break;
-    default:
-	phs->datafmt.datatype = CS_CHAR_TYPE;
-	value = phs->sv_buf;
-	value_len = CS_NULLTERM;
-	break;
     }
 
     if(imp_sth->dyn_execed == 0) {

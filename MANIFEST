@@ -10,7 +10,9 @@ Makefile.PL
 dbdimp.c
 dbdimp.h
 t/base.t
+t/login.t
 t/main.t
+t/place.t
 eg/Show.cgi
 eg/dbschema.pl
 
