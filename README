@@ -1,4 +1,4 @@
-$Id: README,v 1.5 1998/11/15 19:54:49 mpeppler Exp $
+$Id: README,v 1.6 1998/11/17 16:14:15 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -32,6 +32,13 @@ Recent changes:
 
 Warning - there have been quite a few changes to the internals in this 
 release. Please test carefully before putting this version in production!
+
+Release 0.12
+
+	Bug fix release - recent versions of DBI make an array that
+	DBD::Sybase uses read-only, causing errors when multiple
+	result sets are retrieved where the second result set is wider 
+	(has more columns) than the first one.
 
 Release 0.11
 

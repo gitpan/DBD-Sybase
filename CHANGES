@@ -1,4 +1,11 @@
-$Id: CHANGES,v 1.9 1998/11/15 19:52:58 mpeppler Exp $
+$Id: CHANGES,v 1.10 1998/11/17 16:13:57 mpeppler Exp $
+
+Release 0.12
+
+	Bug fix release - recent versions of DBI make an array that
+	DBD::Sybase uses read-only, causing errors when multiple
+	result sets are retrieved where the second result set is wider 
+	(has more columns) than the first one.
 
 Release 0.11
 

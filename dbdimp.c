@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.10 1998/11/15 19:52:20 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.11 1998/11/17 16:11:35 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -1364,10 +1364,15 @@ syb_st_fetch(sth, imp_sth)
     av = DBIS->get_fbav(imp_sth);
     num_fields = AvFILL(av)+1;
     if(num_fields < imp_sth->numCols) {
+	int readonly = SvREADONLY(av);
+	if(readonly)
+	    SvREADONLY_off(av);		/* DBI sets this readonly  */
 	i = imp_sth->numCols - 1;
 	while(i >= num_fields)
 	    av_store(av, i--, newSV(0));
 	num_fields = AvFILL(av)+1;
+	if(readonly)
+	    SvREADONLY_on(av);		/* protect against shift @$row etc */
     }
 
     ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
