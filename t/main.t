@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.1 1997/08/12 16:01:50 mpeppler Exp mpeppler $
+# $Id: main.t,v 1.2 1997/10/07 00:53:18 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -40,12 +40,9 @@ DBI->trace(0); # 2=detailed handle trace
 
 print "Switch: $switch->{'Attribution'}, $switch->{'Version'}\n";
 
-#$switch->{'DebugDispatch'} = 2; # 2=detailed trace of all dispatching
-#print "DebugDispatch: $switch->{'DebugDispatch'}\n";
-
 print "Available Drivers: ",join(", ",DBI->available_drivers()),"\n";
 
-my $dbh = DBI->connect('dbi:Sybase:', $Uid, $Pwd, {syb_dbd_server=>$Srv});
+my $dbh = DBI->connect("dbi:Sybase:$Srv", $Uid, $Pwd);
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;

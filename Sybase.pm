@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.2 1997/09/26 21:27:42 mpeppler Exp $
+# $Id: Sybase.pm,v 1.3 1997/10/07 00:51:57 mpeppler Exp $
 
 # Copyright (c) 1996, 1997   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.03';
-    my $Revision = substr(q$Revision: 1.2 $, 10);
+    $VERSION = '0.04';
+    my $Revision = substr(q$Revision: 1.3 $, 10);
 
     require_version DBI 0.89;
 
@@ -70,9 +70,6 @@
 #	    ct_config(CS_SET, CS_IFILE, $attr->{IFILE});
 #	}
 	# If the server name is set in $attr
-	if($attr->{syb_dbd_server}) {
-	    $server = $attr->{syb_dbd_server};
-	}
         my($this) = DBI::_new_dbh($drh, {
 	    'Name' => $server,
 	    'User' => $user,

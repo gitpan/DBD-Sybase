@@ -1,4 +1,4 @@
-$Id: README,v 1.1 1997/09/25 00:26:01 mpeppler Exp mpeppler $
+$Id: README,v 1.2 1997/10/07 00:51:20 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -31,18 +31,26 @@ of insert/update) aren't handled right.
 
 Building:
 
-Edit Makefile.PL and set $SYBASE to the Sybase installation directory
-on your system.
+Edit CONFIG to set system defaults:
+	SYBASE is the root directory of your Sybase installation. DBD::Sybase
+	will use $SYBASE/lib and $SYBASE/include during the build.
+
+	EXTRA_LIBS lists any extra libraries that are required on your
+	system. For example, Solaris 2.x needs -ltli. See your OS specific
+	documentation supplement from Sybase to determine what is required.
+
+	DBI_INCLUDE is the directory where DBI installed its include files.
+	Makefile.PL will normally deduce this directory from perl's Config
+	module, so you only need to set this if Makefile.PL fails.
+
+	LINKTYPE. Uncomment and set to 'static' if you want to build
+	DBD::Sybase statically (ie always included in a new perl binary).
+
 Run perl Makefile.PL, make, make test.
 
 The regression tests are minimal at the moment so don't necessarily
 believe all is fine if the tests succeed...
 
-I still have a problem with $dbh->disconnect which produces a message
-like
-	disconnect(DBI::db=HASH(0x1b5fe0)) invalidates -3 active cursor(s) at t/main.t line 141.
-
-for some reason. This will get fixed when I figure out what is wrong.
 
 
 Let me repeat: this is ALPHA software - testing has been minimal!!!

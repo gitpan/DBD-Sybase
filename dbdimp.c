@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.2 1997/09/26 23:26:26 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.3 1997/10/07 00:52:41 mpeppler Exp $
 
    Copyright (c) 1997  Michael Peppler
 
@@ -346,6 +346,10 @@ syb_db_login(dbh, imp_dbh, server, uid, pwd)
     if((retcode = ct_con_alloc(context, &connection)) != CS_SUCCEED)
 	warn("ct_con_alloc failed");
   
+    if((retcode = ct_con_props(connection, CS_SET, CS_USERDATA,
+			       &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
+	warn("ct_con_props(userdata) failed");
+
     if(retcode == CS_SUCCEED && uid && *uid) {
 	if((retcode = ct_con_props(connection, CS_SET, CS_USERNAME, 
 				   uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
@@ -371,12 +375,9 @@ syb_db_login(dbh, imp_dbh, server, uid, pwd)
 
     imp_dbh->connection = connection;
 
-    if((retcode = ct_con_props(connection, CS_SET, CS_USERDATA,
-			       &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
-	warn("ct_con_props(userdata) failed");
 
-    DBIc_on(imp_dbh, DBIcf_IMPSET);	/* imp_dbh set up now		*/
-    DBIc_on(imp_dbh, DBIcf_ACTIVE);	/* call disconnect before freeing*/
+    DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
+    DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
 
     DBH = imp_dbh;
 
@@ -536,6 +537,11 @@ int      syb_db_disconnect(dbh, imp_dbh)
 {
     CS_RETCODE retcode;
 
+    /* rollback if we get disconnected and no explicit commit
+       has been called (when in non-AutoCommit mode) */
+    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->inTransaction)
+	syb_db_rollback(dbh, imp_dbh);
+
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_disconnect() -> ct_close()\n");
     if((retcode = ct_close(imp_dbh->connection, CS_FORCE_CLOSE)) != CS_SUCCEED)
@@ -543,7 +549,7 @@ int      syb_db_disconnect(dbh, imp_dbh)
     if((retcode = ct_con_drop(imp_dbh->connection)) != CS_SUCCEED)
 	fprintf(DBILOGFP, "    syb_db_disconnect(): ct_con_drop() failed\n");
 
-    DBIc_off(imp_dbh, DBIcf_ACTIVE);
+    DBIc_ACTIVE_off(imp_dbh);
 
     return 1;
 }
@@ -573,6 +579,12 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     char *key = SvPV(keysv,kl);
 
     if (kl == 10 && strEQ(key, "AutoCommit")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    /* Going from OFF to ON - so force a COMMIT on any open 
+	       transaction */
+	    dbd_db_commit(dbh, imp_dbh);
+	}
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, SvTRUE(valuesv));
 	return TRUE;
     }
@@ -885,7 +897,7 @@ int      syb_st_execute(sth, imp_sth)
     if(restype == CS_CMD_FAIL)
 	return -2;
 
-    DBIc_on(imp_sth, DBIcf_ACTIVE);
+    DBIc_ACTIVE_on(imp_sth);
 
     return imp_sth->numRows;
 }
