@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.12 1998/11/23 16:46:35 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.13 1999/05/16 18:29:55 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -31,12 +31,13 @@ static CS_INT display_dlen _((CS_DATAFMT *));
 static CS_RETCODE display_header _((imp_dbh_t *, CS_INT, CS_DATAFMT*));
 static CS_RETCODE describe _((imp_sth_t *, int));
 static CS_RETCODE fetch_data _((imp_dbh_t *, CS_COMMAND*));
-static CS_RETCODE clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
-static CS_RETCODE servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
+static CS_RETCODE CS_PUBLIC clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
+static CS_RETCODE CS_PUBLIC servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
 static CS_COMMAND *syb_alloc_cmd _((CS_CONNECTION*));
 static void dealloc_dynamic _((imp_sth_t *));
 static int map_types _((int));
 static CS_CONNECTION *syb_db_connect _((struct imp_dbh_st *));
+static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
 
 
 static CS_CONTEXT *context;
@@ -44,7 +45,7 @@ static char scriptName[255];
 
 static imp_dbh_t *DBH;
 
-static CS_RETCODE
+static CS_RETCODE CS_PUBLIC
 clientmsg_cb(context, connection, errmsg)
 CS_CONTEXT	*context;
 CS_CONNECTION	*connection;	
@@ -80,10 +81,26 @@ CS_CLIENTMSG	*errmsg;
     if(CS_NUMBER(errmsg->msgnumber) == 6) { /* disconnect */
 	imp_dbh->isDead = 1;
     }
+
+    /* If this is a timeout message, return CS_FAIL to cancel the
+       operation and (if we're lucky) mark the connection as dead.
+       After a timeout the connection should be considered unusable.
+       Note that returning CS_SUCCEED on timeout simply tells the
+       library to wait for another timeout period after which this
+       callback will probably be called again. */
+
+    if (CS_SEVERITY(errmsg->msgnumber) == CS_SV_RETRY_FAIL &&
+	CS_NUMBER(errmsg->msgnumber) == 63 &&
+	CS_ORIGIN(errmsg->msgnumber) == 2 &&
+	CS_LAYER(errmsg->msgnumber) == 1) {
+	imp_dbh->isDead = 1;	/* XXX */
+	return CS_FAIL;
+    }
+
     return CS_SUCCEED;
 }
 
-static CS_RETCODE
+static CS_RETCODE CS_PUBLIC
 servermsg_cb(context, connection, srvmsg)
 CS_CONTEXT	*context;
 CS_CONNECTION	*connection;
@@ -159,7 +176,7 @@ CS_SERVERMSG	*srvmsg;
 	    }
 	    fprintf(DBILOGFP, "text=%s\n", srvmsg->text);
 	} else {
-	    fprintf(DBILOGFP, "%s\n", srvmsg->text);
+	    warn("%s\n", srvmsg->text);
 	}
 
 	fflush(DBILOGFP);
@@ -342,6 +359,24 @@ void syb_init(dbistate)
     }
 }
 
+int
+syb_set_timeout(timeout)
+    int		timeout;
+{
+    CS_RETCODE retcode;
+    if(timeout <= 0)
+	timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
+				   default no limit */
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
+    if((retcode = ct_config(context, CS_SET, CS_TIMEOUT, &timeout,
+			    CS_UNUSED, NULL)) != CS_SUCCEED)
+	warn("ct_config(CS_SET, CS_TIMEOUT) failed");
+
+    return retcode;
+}
+
+
 static int
 extractFromDsn(tag, source, dest, size)
     char 	*tag;
@@ -378,15 +413,21 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->language[0]   = 0;
     imp_dbh->ifile[0]      = 0;
     imp_dbh->loginTimeout[0] = 0;
+    imp_dbh->timeout[0]    = 0;
+    imp_dbh->hostname[0]   = 0;
+    imp_dbh->scriptName[0] = 0;
+    imp_dbh->database[0]   = 0;
     
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
 	extractFromDsn("charset=", dsn, imp_dbh->charset, 64);
+	extractFromDsn("database=", dsn, imp_dbh->database, 36);
 	extractFromDsn("packetSize=", dsn, imp_dbh->packetSize, 64);
 	extractFromDsn("language=", dsn, imp_dbh->language, 64);
 	extractFromDsn("interfaces=", dsn, imp_dbh->ifile, 255);
 	extractFromDsn("loginTimeout=", dsn, imp_dbh->loginTimeout, 64);
+	extractFromDsn("timeout=", dsn, imp_dbh->timeout, 64);
 	extractFromDsn("scriptName=", dsn, imp_dbh->scriptName, 255);
 	extractFromDsn("hostname=", dsn, imp_dbh->hostname, 255);
     } else {
@@ -451,6 +492,17 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 				CS_UNUSED, NULL)) != CS_SUCCEED)
 	    warn("ct_config(CS_SET, CS_LOGIN_TIMEOUT) failed");
     }
+    if(imp_dbh->timeout[0]) {
+	int timeout = atoi(imp_dbh->timeout);
+	if(timeout <= 0)
+	    timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
+					   default no limit */
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
+	if((retcode = ct_config(context, CS_SET, CS_TIMEOUT, &timeout,
+				CS_UNUSED, NULL)) != CS_SUCCEED)
+	    warn("ct_config(CS_SET, CS_TIMEOUT) failed");
+     }
 	
     if(imp_dbh->locale == NULL) {
 	CS_INT type = CS_DATES_SHORT;
@@ -572,7 +624,37 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
     }
 
+    if(imp_dbh->database[0])
+	syb_db_use(imp_dbh, connection);
+
     return connection;
+}
+
+static int
+syb_db_use(imp_dbh, connection)
+    imp_dbh_t *imp_dbh;
+    CS_CONNECTION *connection;
+{
+    CS_COMMAND *cmd = syb_alloc_cmd(connection);
+    CS_RETCODE ret;
+    CS_INT     restype;
+    char       statement[255];
+
+    if(!cmd)
+	return -1;
+
+    sprintf(statement, "use %s", imp_dbh->database);
+    ret = ct_command(cmd, CS_LANG_CMD, statement, CS_NULLTERM, CS_UNUSED);
+    if(ret != CS_SUCCEED)
+	return -1;
+    while((ret = ct_results(cmd, &restype)) == CS_SUCCEED) {
+	if(restype == CS_CMD_FAIL)
+	    warn("DBD::Sybase - can't change context to database %s\n",
+		 imp_dbh->database);
+    }
+    ct_cmd_drop(cmd);
+
+    return 0;
 }
 
 int syb_db_date_fmt(dbh, imp_dbh, fmt)
@@ -1366,6 +1448,10 @@ syb_st_fetch(sth, imp_sth)
 
     av = DBIS->get_fbav(imp_sth);
     num_fields = AvFILL(av)+1;
+
+    /* XXX
+       The code in the if() below is likely to break with new versions
+       of DBI!!! */
     if(num_fields < imp_sth->numCols) {
 	int isReadonly = SvREADONLY(av);
 	if(isReadonly)
@@ -1373,6 +1459,14 @@ syb_st_fetch(sth, imp_sth)
 	i = imp_sth->numCols - 1;
 	while(i >= num_fields)
 	    av_store(av, i--, newSV(0));
+	num_fields = AvFILL(av)+1;
+	if(isReadonly)
+	    SvREADONLY_on(av);		/* protect against shift @$row etc */
+    } else if(num_fields > imp_sth->numCols) {
+	int isReadonly = SvREADONLY(av);
+	if(isReadonly)
+	    SvREADONLY_off(av);		/* DBI sets this readonly  */
+	av_fill(av, imp_sth->numCols - 1);
 	num_fields = AvFILL(av)+1;
 	if(isReadonly)
 	    SvREADONLY_on(av);		/* protect against shift @$row etc */
@@ -1478,10 +1572,17 @@ int      syb_st_finish(sth, imp_sth)
 	imp_dbh->connection;
 
     if (DBIc_ACTIVE(imp_sth)) {
+#if defined(ROGUE)
+	if(ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT) == CS_FAIL) {
+	      ct_close(connection, CS_FORCE_CLOSE);
+	      imp_dbh->isDead = 1;
+	}	  
+#else  
 	if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
 	      ct_close(connection, CS_FORCE_CLOSE);
 	      imp_dbh->isDead = 1;
-	}	    
+	}	  
+#endif
     }
     DBIc_ACTIVE_off(imp_sth);
     return 1;
@@ -1863,8 +1964,10 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 	name = SvPV(ph_namesv, name_len);
     }
 
-    if (SvTYPE(newvalue) > SVt_PVMG)    /* hook for later array logic   */
+    if (SvTYPE(newvalue) > SVt_PVLV)    /* hook for later array logic   */
         croak("Can't bind non-scalar value (currently)");
+    if (SvTYPE(newvalue) == SVt_PVLV && is_inout)       /* may allow later */
+	croak("Can't bind ``lvalue'' mode scalar as inout parameter (currently)");
 
     if (dbis->debug >= 2)
 	fprintf(DBILOGFP, "bind %s <== '%.200s' (attribs: %s)\n",

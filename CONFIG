@@ -1,4 +1,4 @@
-# $Id: CONFIG,v 1.5 1998/10/07 23:59:32 mpeppler Exp $
+# $Id: CONFIG,v 1.6 1999/05/16 18:28:42 mpeppler Exp $
 # Configuration file for Sybperl
 #
 # Where is the Sybase directory on your system (include files &
@@ -16,14 +16,14 @@ SYBASE=/opt/sybase
 # Linux needs -linsck
 # See the Sybase OpenClient Supplement for your OS/Hardware
 # combination.
-EXTRA_LIBS=-ltli
+EXTRA_LIBS=-linsck
 
 # DBI_INCLUDE
 # DBD::Sybase needs access to some C include files that are provided
 # by the DBI module. These are normally found in $Config{sitearchexp}/auto/DBI
 # but if they are in some other place on your system then you can specify
 # that directory here:
-# DBI_INCLUDE=/usr/local/lib/perl5/site_perl/sun4-solaris/auto/DBI
+# DBI_INCLUDE=/usr/local/lib/perl5/site_perl/sun4-solaris/
 
 
 # LINKTYPE

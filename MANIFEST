@@ -9,6 +9,7 @@ Sybase.xs
 Makefile.PL
 dbdimp.c
 dbdimp.h
+dbd-sybase.pod
 t/base.t
 t/login.t
 t/main.t

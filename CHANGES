@@ -1,4 +1,13 @@
-$Id: CHANGES,v 1.11 1998/11/23 16:46:58 mpeppler Exp $
+$Id: CHANGES,v 1.12 1999/05/16 18:26:24 mpeppler Exp $
+
+Release 0.14
+
+	Added a 'timeout' connection attribute (contributed by Tom May) 
+	to handle timeout errors during normal processing.
+	SQL PRINT statements are now handled by a warn() call (instead
+	a printf() call) so that they can be caught by a __WARN__ handler.
+        Make sure $dbh->do() returns immediately when an error is encountered.
+	Include dbd-sybase.pod (Tim Bunce's Driver Summary for DBD::Sybase).
 
 Release 0.13
 

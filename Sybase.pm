@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.13 1998/11/23 16:45:32 mpeppler Exp $
+# $Id: Sybase.pm,v 1.14 1999/05/16 18:26:38 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.13';
-    my $Revision = substr(q$Revision: 1.13 $, 10);
+    $VERSION = '0.14';
+    my $Revision = substr(q$Revision: 1.14 $, 10);
 
     require_version DBI 1.02;
 
@@ -67,9 +67,9 @@
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth) or return undef;
 
-	if($server =~ /database=(\w+)/) {
-	    $this->do("use $1");
-	}
+#	if($server =~ /database=(\w+)/) {
+#	    $this->do("use $1");
+#	}
 
 	$this;
     }
@@ -108,15 +108,20 @@
 	@names;
     }
 
+# NOTE - RaiseError & PrintError is turned off while we are inside this
+# function, so we must check for any error, and return immediately if
+# any error is found.
     sub do {
 	my($dbh, $statement, $attr, @params) = @_;
 
 	my $sth = $dbh->prepare($statement, $attr) or return undef;
-	$sth->execute(@params) or return undef;
+	my $ret = $sth->execute(@params) or return undef;
+	return undef if $sth->err;
 	my $rows = $sth->rows;
 	if(defined($sth->{syb_more_results})) {
 	    do {
 		while(my $dat = $sth->fetch) {
+		    return undef if $sth->err;
 		    # XXX do something intelligent here...
 		}
 	    } while($sth->{syb_more_results});
@@ -286,6 +291,17 @@ error. The default value is 60 seconds, which is usually enough, but on a busy
 server it is sometimes necessary to increase this value:
 
      $dbh = DBI->connect("dbi:Sybase:loginTimeout=240", # wait up to 4 minutes
+			 $user, $passwd);
+=item timeout
+
+Specify the number of seconds after which any Open Client calls will timeout
+the connection and mark it as dead. Once a timeout error has been received
+on a connection it should be closed and re-opened for further processing.
+
+Setting this value to 0 or a negative number will result in an unlimited
+timeout value. See also the Open Client documentation on CS_TIMEOUT.
+
+     $dbh = DBI->connect("dbi:Sybase:timeout=240", # wait up to 4 minutes
 			 $user, $passwd);
 
 =item scriptName
@@ -496,7 +512,7 @@ after each call to $dbh->commit() or $dbh->rollback(). This works
 fine, but will cause any SQL that contains any I<CREATE TABLE>
 statements to fail. These I<CREATE TABLE> statements can be
 burried in a stored procedure somewhere (for example,
-C<sp_helprotect> creates two templ tables when it is run).
+C<sp_helprotect> creates two temp tables when it is run).
 
 If you absolutely want to have manual commits (ie have
 B<AutoCommit> set to 0) and be able to run any arbitrary SQL, then
@@ -540,6 +556,15 @@ B<WHERE> clause, in the B<SET> clause of an B<UPDATE> statement, or in the
 B<VALUES> list of an B<INSERT> statement. In particular you can't pass ?
 as a parameter to a stored procedure.
 
+There is also a performance issue: OpenClient creates stored procedures in
+tempdb for each prepare() call that includes ? placeholders. Creating
+these objects requires updating system tables in the tempdb database, and
+can therefore create a performance hotspot if a lot of prepare() statements
+from multiple clients are executed simultaneously (I have heard that
+Sybase 11.9.x corrects this hotspot problem.) In general it is better
+if your application is going to run against Sybase to write ad-hoc
+stored procedures rather than use the ? placeholders in embedded SQL.
+
 Please see the discussion on Dynamic SQL in the 
 OpenClient C Programmer's Guide for details. The guide is available on-line
 at http://sybooks.sybase.com/dynaweb.
@@ -549,9 +574,6 @@ at http://sybooks.sybase.com/dynaweb.
 
 Setting $dbh->{LongReadLen} has no effect. Use $dbh->do("set textsize xxxx")
 instead.
-
-You can't set a particular database via the connect() call. Use
-$dbh->do("use $database") instead.
 
 You can run out of space in the tempdb database if you use a lot of
 calls with bind variables (ie ? style placeholders) without closing the
@@ -575,7 +597,7 @@ DBD::Sybase by Michael Peppler
 
 =head1 COPYRIGHT
 
-The DBD::Sybase module is Copyright (c) 1997, 1998 Michael Peppler.
+The DBD::Sybase module is Copyright (c) 1997-1999 Michael Peppler.
 The DBD::Sybase module is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself with the exception that it
 cannot be placed on a CD-ROM or similar media for commercial distribution
