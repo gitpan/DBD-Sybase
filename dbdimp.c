@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.17 1999/06/22 07:33:06 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.18 1999/06/25 14:58:25 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -570,6 +570,8 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    return 0;
 	}
 	if(imp_dbh->language[0] != 0) {
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_LANG,%s)\n", imp_dbh->language);
 	    if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
 			   (CS_CHAR*)imp_dbh->language, CS_NULLTERM, 
 			   (CS_INT*)NULL) != CS_SUCCEED)
@@ -579,6 +581,8 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
 	if(imp_dbh->charset[0] != 0) {
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_CHARSET,%s)\n", imp_dbh->charset);
 	    if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
 			   (CS_CHAR*)imp_dbh->charset, CS_NULLTERM, 
 			   (CS_INT*)NULL) != CS_SUCCEED)
@@ -628,6 +632,9 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    value = CS_TDS_50;
 
 	if(value) {
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_db_login() -> ct_con_props(CS_TDS_VERSION,%s)\n", imp_dbh->tdsLevel);
+
 	    if (ct_con_props( connection, CS_SET, CS_TDS_VERSION, (CS_VOID*)&value,
 			      CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) {
 		warn("ct_con_props(CS_TDS_VERSION, %s) failed",
@@ -640,6 +647,8 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 
     if (imp_dbh->packetSize[0] != 0) {
 	int i = atoi(imp_dbh->packetSize);
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_login() -> ct_con_props(CS_PACKETSIZE,%d)\n", i);
 	if (ct_con_props( connection, CS_SET, CS_PACKETSIZE, (CS_VOID*)&i,
 			  CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
 	{
@@ -702,18 +711,18 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	syb_db_use(imp_dbh, connection);
 
     if(imp_dbh->chainedSupported) {
-	CS_BOOL value;
-	if(DBIc_is(imp_dbh, DBIcf_AutoCommit))
-	    value = CS_FALSE;
-	else 
-	    value = CS_TRUE;
+	CS_BOOL value = CS_FALSE;
 
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_login() -> checking for chained transactions\n");
 	retcode = ct_options(connection, CS_SET, CS_OPT_CHAINXACTS, 
 			     &value, CS_UNUSED, NULL);
 	if(retcode == CS_FAIL) {
 	    imp_dbh->doRealTran = 1;
 	    imp_dbh->chainedSupported = 0;
 	}
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_login() -> chained transactions are %s supported\n", retcode == CS_FAIL ? "not" : "");
     }
 
     return connection;
@@ -733,6 +742,8 @@ syb_db_use(imp_dbh, connection)
 	return -1;
 
     sprintf(statement, "use %s", imp_dbh->database);
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_db_use() -> ct_command(%s)\n", statement);
     ret = ct_command(cmd, CS_LANG_CMD, statement, CS_NULLTERM, CS_UNUSED);
     if(ret != CS_SUCCEED) {
 	warn("ct_command failed for '%s'", statement);
@@ -996,13 +1007,26 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if (kl == 15 && strEQ(key, "syb_chained_txn")) {
 	on = SvTRUE(valuesv);
 	if(imp_dbh->chainedSupported) {
-	    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
+	    int autocommit = DBIc_is(imp_dbh, DBIcf_AutoCommit);
+	    if(!autocommit)
 		syb_db_commit(dbh, imp_dbh);
 	    if(on) {
 		imp_dbh->doRealTran = 0;
 	    } else {
 		imp_dbh->doRealTran = 1;
 	    }
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_db_STORE() -> syb_chained_txn => %d\n", on);
+	    if(!autocommit) {
+		CS_BOOL    value = on ? CS_TRUE : CS_FALSE;
+		CS_RETCODE ret;
+		ret = ct_options(imp_dbh->connection, CS_SET,
+				 CS_OPT_CHAINXACTS, 
+				 &value, CS_UNUSED, NULL);
+		if(dbis->debug >= 2)
+		    fprintf(DBILOGFP, "    syb_db_STORE() -> syb_chained_txn AutoCommit off CS_OPT_CHAINXACTS(%d) => %d\n", value, ret);
+	    }
+
 	} else {
 	    /* XXX - should this issue a warning???? */
 	}
@@ -1155,6 +1179,15 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = newSViv(1);
 	else
 	    retsv = newSViv(0);
+    }
+    if (kl == 18 && strEQ(key, "syb_check_tranmode")) {
+	CS_INT value;
+	CS_RETCODE ret;
+	ret = ct_options(imp_dbh->connection, CS_GET, CS_OPT_CHAINXACTS, 
+			 &value, CS_UNUSED, NULL);
+	if(ret != CS_SUCCEED)
+	    value = 0;
+	retsv = newSViv(value);
     }
     if (kl == 16 && strEQ(key, "syb_flush_finish")) {
 	if(imp_dbh->flushFinish)
@@ -1795,8 +1828,9 @@ int      syb_st_finish(sth, imp_sth)
 	imp_dbh->connection;
 
     if (imp_dbh->flushFinish) {
-	while (DBIc_ACTIVE(imp_sth) && syb_st_fetch(sth, imp_sth))
-	    1;
+	while (DBIc_ACTIVE(imp_sth))
+	    while (syb_st_fetch(sth, imp_sth))
+		1;
     }
     else {
 	if (DBIc_ACTIVE(imp_sth)) {

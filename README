@@ -1,4 +1,4 @@
-$Id: README,v 1.10 1999/06/22 07:31:33 mpeppler Exp $
+$Id: README,v 1.11 1999/06/25 15:00:35 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -32,6 +32,11 @@ man page for details.
 
 Recent changes:
 
+Release 0.19
+
+	Setting chained/non-chained mode was still broken. <sigh>
+	syb_flush_finish mode didn't quite work right either.
+
 Release 0.18
 
 	Add $h->{syb_chained_txn} attribute to switch between CHAINED
@@ -47,8 +52,8 @@ Release 0.17
 
 	Fix AutoCommit = 0 problems introduced with 0.15 for MS-SQL or older
 	Sybase server (ie TDS 4.x protocol connections).
-	Add syb_dynamic_supported $dbh attribute to check whether the connection
-	supports ?-style placeholders.
+	Add syb_dynamic_supported $dbh attribute to check whether the
+	connection supports ?-style placeholders.
 
 Release 0.16
 
@@ -138,6 +143,10 @@ Run perl Makefile.PL, make, make test.
 If everything's fine, run "make install" to move the files to your 
 installed perl library tree.
 
+
+Known Problems:
+===============
+
 On Solaris 2.x make test will fail if LD_LIBRARY_PATH is set and has
 /usr/lib or /lib before $SYBASE/lib. This is because both Solaris 2.x
 and Sybase have a library called libintl.so, and if /usr/lib is placed 
@@ -161,5 +170,5 @@ Comments, criticism, etc. welcome!
 Michael
 --
 Michael Peppler, Data Migrations, Inc.
-mpeppler@datamig.com - http://www.mbay.net/~mpeppler
+mpeppler@peppler.org - http://www.mbay.net/~mpeppler
 

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.18 1999/06/22 07:22:04 mpeppler Exp $
+# $Id: Sybase.pm,v 1.19 1999/06/23 17:07:25 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.18';
-    my $Revision = substr(q$Revision: 1.18 $, 10);
+    $VERSION = '0.19';
+    my $Revision = substr(q$Revision: 1.19 $, 10);
 
     require_version DBI 1.02;
 
