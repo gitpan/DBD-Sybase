@@ -1,8 +1,8 @@
-$Id: README,v 1.17 2001/08/03 20:05:59 mpeppler Exp $
+$Id: README,v 1.18 2002/10/23 21:58:07 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996 - 2001  Michael Peppler
+   Copyright (c) 1996 - 2002  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -15,7 +15,7 @@ Library (aka CT-library). You will need to have that installed before
 you can do anything with this package. You will also need Tim Bunce's
 DBI module, latest release. DBI is available from CPAN, in
 
-    "CPAN"/authors/id/TIMB/DBI/DBI-1.xx-tar.gz
+    "CPAN"/authors/id/TIMB/DBI-1.xx-tar.gz
 
 The Sybase OpenClient libraries are of course available from Sybase.
 For Linux you can get the full Sybase ASE 11.0.3.3 release for free
@@ -30,81 +30,102 @@ DBD::Sybase is a reasonably complete implementation of the DBI spec, but
 there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
-You'll notice that the release numbering has changed between this release
-and the preceding. I feel that DBD::Sybase is now solid enough to warrant
-a "beta" release with a target of releasing 1.00 sometime during this
-winter.
+This release (0.95) includes a fairly large number of bug fixes (see the
+CHANGES file or read the "recent changes" below). In particular there
+are changes in the way empty strings are bound when using placeholders,
+and the default behavior of $sth->execute() for certain types of failures
+has changed (please see the syb_cancel_request_on_error and 
+syb_bind_empty_string_as_null attributes for details).
 
-I'd like to thank the folks at Morgan Stanley for their help with this 
-release.
+This means that you should thoroughly test this release before using
+it in production.
+
+The full write-ups of the bugs that are listed below as "fixed" can be
+seen at http://www.peppler.org/cgi-bin/bug.cgi.
+
 
 Recent changes:
 
-Release 0.93
+Release 0.95
 
-	Added password encryption option to connect() request (contributed
-        by Tin Martone)
-        Added initial nsql().
-	Added ct_get_data(), ct_send_data() and friends func().
-	Added ?-style placeholder support for exec proc statements.
-	Changed getExtraLibs() in Makefile.PL to *not* link with -linsck
-	or -ltli (this avoids problems if the $SYBASE/config/libtcl.cfg
-	file has been set to load the threaded version of these
-	libraries.)
-        Added support for primary_key_info().
-        (release 0.92 was never publicly released for various reasons)
+        Support for building DBD::Sybase in 64 bit mode with the
+        64 bit version of OpenClient on Solaris, HP-UX, AIX, etc.
+        (note that perl itself must also be built in 64 bit
+        mode for this to work!)
 
-        Bugs Fixed:
-	366    ping() fails if connection has been marked dead
-	364    t/fail.t bug.
+	Added column_info() method.
 
-Release 0.91
+	Added G_EVAL flag to syb_err_handler calls.
+	Improved syb_err_handler handling (thanks to Matthew Persico)
+        Fixed memory leak when opening additional connections for multiple
+        statement handles on a single database handle (thanks to Stefan
+        Harbeck)
+        Applied minor patch by Alex Fridman to get to build on WinNT.
+	Force a ct_cancel() if, due to syb_do_proc_status, we force a 
+	failure on a request that could have more results pending (Blaise 
+	Lepeuple)
+	Added syb_cancel_request_on_error attribute (see bug 471).
+	Warning - the default value for this attribute changes the behavior
+	of $sth->execute() when there is a failure that is detected in
+	multi-statement requests.
+	Added syb_bind_empty_string_as_null attribute (see bug 446) to
+	allow user configurable empty string binding semantics (convert
+	to single space [default] or to NULL).
 
-	Removed artificial 1024 byte limit on char/varchar datatypes in 
-	result sets.
+	Bugs Fixed:
 
-	Bug Fixes:
+	431 - fetchrow_hashref() has incorrect keys when retrieving
+              multiple result sets.
+        437 - imp_sth->numRows in st_next_result not always set.
+	444 - Incorrect example for ct_get_data(). ct_get_data() SEGV
+              if passed a non-reference for $image.
+        394 - $sth->{CursorName} fails hard.
+	449 - ct_get_data() limited to 32k
+	450 - Fix incorrect NULLABLE handling.
+	452 - Incorrect $sth->finish() handling in syb_flush_finish mode
+              (thanks to Steve Willer).
+        443 - $sth->fetch produces error if called after $sth->execute on
+	      statement that doesn't return any rows.
+	411 - statement handle attributes do not change between result sets.
+	430 - $dbh->prepare can return undef without triggering RaiseError.
+	436 - Problems with make test generating errors creating 
+              Makefile.aperl.
+	441 - amadmin who,sqm fails while in a transaction.
+	446 - Empty string converts to a space (fixed by making this
+	      configurable).
+	448 - define strncasecmp as strnicmp for Win32 systems.
+	454 - syb_err_handler won't catch connect-time error.
+	456 - ping still fails if connection is dead.
+	461 - Memory leak if NOT using placeholders in selects and
+	      calling execute() multiple times.
+	464 - Binding an empty string for a date field causes "1/1/1900"
+              to be inserted (instead of NULL).
+	469 - nsql error handling bug.
+	447 - syb_db_disconnect(): ct_con_drop() failed.
+	471 - Certain class of errors isn't detected by DBD::Sybase.
 
-	213: BLOBs are returned in HEX, not binary.
 
-Release 0.90
+        Documentation changes to explain why 
+         ... WHERE (product_code = ? OR (? IS NULL AND product_code IS NULL))
+        doesn't work with Sybase.
+	
 
-        Release number sequence change: I'm dropping the "alpha" qualifier
-        and I expect to release 1.00 fairly soon.
 
-	Small Makefile.PL fix for Sybase 12.0 installation directory 
-	changes.
-	Applied patch from Tim Ayers to allow 0x type formatting for
-	binary data fetches (similar to what Sybase::CTlib and 
-	Sybase::DBlib allow).
-	Fixed some t/ scripts to not fail when run against MS-SQL.
-	Corrected the handling of timeout events in the client
-	callback.
+Release 0.94
 
-	Bug Fixes:
+        Added optional SQL buffer argument to syb_err_handler.
+	Interactive setting of user/server/pwd entries in PWD
+	for "make test".
+	Add syb_failed_db_fatal and syb_no_child_con attributes.
 
-	349: CS_NUMERIC bindings for ?-style placeholders fails for large 
-             values.
-       	345: Dynamic statement ids get re-used.
-	351: prepared statements with placeholders cause handle to become 
-	     unusable if *first* execute fails.
-	352: ping() doesn't work right in Apache::DBI (thanks to
-	     Kiriakos Georgiou)
-	353: syb_quoted_identifier doesn't work.
-	354: Calling fetch() after prepare() but no execute() fails with 
-	     internal DBI error. This should also fix bug # 278 and 288.
-	297: type_info() returns incorrect or no data.
-	344: timeout doesn't work correctly.
+	Bugs Fixed:
 
-Release 0.23
-
-	Bug Fixes:
-
-	331: ? marks in comments are parsed as placeholders.
-	343: Errors in stored procs cause data rows from proc to be
-	     thrown away.
-	255: $dbh->execute does not fail it executing proc without
-	     permissions.
+	408 - Add the YYYYMMDD format to _date_fmt().
+	414 - Binding '' is interpreted as NULL.
+	415 - Fix buffer overlow in syb_db_login().
+	418 - Fix incorrect handing of CS_CANCELED return code in 
+              st_next_result().
+        421 - ActiveState patches.
 
 
 
@@ -192,6 +213,17 @@ entry that does not exist in $SYBASE/locales/locales.dat (in the
 OpenClient problem. 
 See http://www.mbay.net/~mpeppler/Linux-ASE-FAQ.html#q1.14 for
 additional details.
+
+FreeTDS:
+--------
+
+The FreeTDS implementation of OpenClient Client Library is still somewhat
+limited. DBD::Sybase will work with FreeTDS, but a number of features
+will either fail silently, or possibly cause your script to crash.
+In particular FreeTDS does not support ?-style placeholders yet (FreeTDS 0.60)
+The "make test" phase of the DBD::Sybase build will fail in various places
+when you've built it with the FreeTDS libraries. This is normal, but should
+allow you to see which DBD::Sybase features are available.
 
 
 The regression tests cover the normal operations, but they are by no 

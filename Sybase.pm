@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.32 2001/12/13 01:05:26 mpeppler Exp $
+# $Id: Sybase.pm,v 1.41 2002/10/23 21:58:07 mpeppler Exp $
 
-# Copyright (c) 1996-2001   Michael Peppler
+# Copyright (c) 1996-2002   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -20,8 +20,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.94';
-    my $Revision = substr(q$Revision: 1.32 $, 10);
+    $VERSION = '0.95';
+    my $Revision = substr(q$Revision: 1.41 $, 10);
 
     require_version DBI 1.02;
 
@@ -167,6 +167,54 @@
 	$sth;
     }
 
+{
+
+    my $names = [qw(TABLE_CAT TABLE_SCHEM TABLE_NAME COLUMN_NAME DATA_TYPE
+		    TYPE_NAME COLUMN_SIZE BUFFER_LENGTH DECIMAL_DIGITS
+		    NUM_PREC_RADIX NULLABLE REMARKS COLUMN_DEF SQL_DATA_TYPE
+		    SQL_DATETIME_SUB CHAR_OCTET_LENGTH ORDINAL_POSITION
+		    IS_NULLABLE
+		    )];
+
+    # Technique of using DBD::Sponge borrowed from DBD::mysql...
+    sub column_info {
+	my $dbh = shift;
+	my $catalog = $dbh->quote(shift);
+	my $schema  = $dbh->quote(shift);
+	my $table   = $dbh->quote(shift);
+	my $column  = $dbh->quote(shift);
+	
+
+	my $sth = $dbh->prepare("sp_columns $table, $schema, $catalog, $column");
+	return undef unless $sth;
+
+	if(!$sth->execute()) {
+	    return DBI::set_err($dbh, $sth->err(), $sth->errstr());
+	}
+	my @cols;
+	while(my $d = $sth->fetchrow_arrayref()) {
+	    push(@cols, [@$d[0..11], @$d[14..19]]);
+	}
+	my $dbh2;
+	if (!($dbh2 = $dbh->{'~dbd_driver~_sponge_dbh'})) {
+	    $dbh2 = $dbh->{'~dbd_driver~_sponge_dbh'} =
+		DBI->connect("DBI:Sponge:");
+	    if (!$dbh2) {
+	        DBI::set_err($dbh, 1, $DBI::errstr);
+		return undef;
+	    }
+	}
+	my $sth2 = $dbh2->prepare("SHOW COLUMNS", { 'rows' => \@cols,
+						   'NAME' => $names,
+						   'NUM_OF_FIELDS' => scalar(@$names) });
+	if (!$sth2) {
+	    DBI::set_err($sth2, $dbh2->err(), $dbh2->errstr());
+	}
+	$sth2->execute;
+	$sth2;
+    }
+}
+
     sub primary_key_info {
 	my $dbh = shift;
 	my $catalog = $dbh->quote(shift);     # == database in Sybase terms
@@ -183,9 +231,14 @@
 	my $dbh = shift;
 	return 0 if DBD::Sybase::db::_isdead($dbh);
 
-	my $sth = $dbh->prepare("select * from sysusers where 1=2");
+	# Use "select 1" suggested by Henri Asseily.
+	my $sth = $dbh->prepare("select 1");
+
+	return 0 if !$sth;
+
+	my $rc = $sth->execute;
 	
-	return 0 if(!defined($sth->execute) && DBD::Sybase::db::_isdead($dbh));
+	return 0 if(!defined($rc) && DBD::Sybase::db::_isdead($dbh));
 
 	$sth->finish;
 	return 1;
@@ -281,17 +334,29 @@
 	my $sth = $dbh->prepare($sql);
 	return unless $sth;
 
-	$sth->{RaiseError} = 1;
+	my $raiserror = $dbh->FETCH('RaiseError');
+
+#	warn "raiserror = $raiserror";
+	my $errstr;
+	my $err;
+
+	# Rats - RaiseError doesn't seem to work inside of this routine.
+	# So we fake it with lots of die() statements.
+#	$sth->{RaiseError} = 1;
+
+#	DBI->trace(3);
 	
     DEADLOCK: 
         {	
 	    # Use RaiseError technique to throw a fatal error if anything goes
 	    # wrong in the execute or fetch phase.
 	    eval { 
-		$sth->execute; 
+		$sth->execute || die $sth->errstr; 
+#		$sth->execute;
 		do {
 		    if ( $type eq "HASH" ) {
 			while ( $data = $sth->fetchrow_hashref ) {
+			    die $sth->errstr if($sth->err);
 			    if ( ref $callback eq "CODE" ) {
 				unless ( $callback->(%$data) ) {
 				    return;
@@ -304,6 +369,7 @@
 		    }
 		    elsif ( $type eq "ARRAY" ) {
 			while ( $data = $sth->fetchrow_arrayref ) {
+			    die $sth->errstr if($sth->err);
 			    if ( ref $callback eq "CODE" ) {
 				unless ( $callback->(@$data) ) {
 				    return;
@@ -321,11 +387,15 @@
 			$res[0]++;	# Return non-null (true)
 		    }
 		    
-		} while($sth->FETCH('syb_more_results'));
+		    die $sth->errstr if($sth->err);
+		    
+		} while($sth->{'syb_more_results'});
 	    };
 	    # If $@ is set then something failed in the eval{} call above.
 	    if($@) {
-		my $err = $sth->err;
+		$errstr = $@;
+		$err = $sth->err || $dbh->err;
+#		warn "in eval check: $errstr, $err";
 		if ( $dbh->FETCH('syb_deadlock_retry') && $err == 1205 ) {
 		    if ( $retrycount < 0 || $retrycount-- ) {
 			carp "SQL deadlock encountered.  Retrying...\n" if $retryverbose;
@@ -345,7 +415,11 @@
 	#
 	# If we picked any sort of error, then don't feed the data back.
 	#
-	if ( $dbh->err ) {
+#	warn "err = $err, raiserror = $raiserror, errstr = $errstr";
+	if ( $err ) {
+	    if($raiserror) {
+		croak($errstr);
+	    }
 	    return;
 	}
 	elsif ( ref $callback eq "CODE" ) {
@@ -726,35 +800,75 @@ duplicate insert to fail, for example.
 
 =item syb_err_handler (subroutine ref)
 
-This attribute is used to set an ad-hoc error handler callback (ie a perl 
-subroutine) that gets called before the normal error handler does it's job.
-If this subroutine returns 0 then the error is ignored. This is useful
-for handling PRINT statements in Transact-SQL, for handling messages
-from the Backup Server, showplan output, dbcc output, etc.
-
-The subroutine is called with 7 parameters: the Sybase error number,
-the severity, the state, the line number in the SQL batch, the server name 
-(if available), the stored procedure name (if available), and the message
-text. If C<syb_show_sql> is true, then an 8th parameter is uncluded: the 
-current SQL command buffer.
-
-For client-side errors the state and line number are always 0, and the 
-server name and procedure name are always undef.
-
-Example:
-
-    %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6299, 10201 .. 10299);
-    sub err_handler {
-        my($err, $sev, $state, $line, $server, $proc, $msg) = @_;
-
-        if($showplan_msgs{$err}) { # it's a showplan message
-            print SHOWPLAN "$err - $msg\n";
-            return 0;    # This is not an error
-        }
-
-        return 1;
-    }
-
+This attribute is used to set an ad-hoc error handler callback (ie a
+perl subroutine) that gets called before the normal error handler does
+it's job.  If this subroutine returns 0 then the error is
+ignored. This is useful for handling PRINT statements in Transact-SQL,
+for handling messages from the Backup Server, showplan output, dbcc
+output, etc.
+ 
+The subroutine is called with nine parameters:
+ 
+  o the Sybase error number
+  o the severity
+  o the state
+  o the line number in the SQL batch
+  o the server name (if available)
+  o the stored procedure name (if available)
+  o the message text
+  o the current SQL command buffer
+  o either of the strings "client" (for Client Library errors) or
+    "server" (for server errors, such as SQL syntax errors, etc),
+    allowing you to identify the error type.
+  
+As a contrived example, here is a port of the distinct error and
+message handlers from the Sybase documentation:
+  
+  Example:
+  
+  sub err_handler {
+      my($err, $sev, $state, $line, $server,
+ 	$proc, $msg, $sql, $err_type) = @_;
+ 
+      my @msg = ();
+      if($err_type eq 'server') {
+ 	 push @msg,
+ 	   ('',
+ 	    'Server message',
+ 	    sprintf('Message number: %ld, Severity %ld, State %ld, Line %ld',
+ 		    $err,$sev,$state,$line),
+ 	    (defined($server) ? "Server '$server' " : '') .
+ 	    (defined($proc) ? "Procedure '$proc'" : ''),
+ 	    "Message String:$msg");
+      } else {
+ 	 push @msg,
+ 	   ('',
+ 	    'Open Client Message:',
+ 	    sprintf('Message number: SEVERITY = (%ld) NUMBER = (%ld)',
+ 		    $sev, $err),
+ 	    "Message String: $msg");
+      }
+      print STDERR join("\n",@msg);
+      return 0; ## CS_SUCCEED
+  }
+ 
+In a simpler and more focused example, this error handler traps
+showplan messages:
+ 
+   %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6299, 10201 .. 10299);
+   sub err_handler {
+      my($err, $sev, $state, $line, $server,
+ 	$proc, $msg, $sql, $err_type) = @_;
+  
+       if($showplan_msgs{$err}) { # it's a showplan message
+  	 print SHOWPLAN "$err - $msg\n";
+  	 return 0;    # This is not an error
+       }
+       return 1;
+   }
+  
+and this is how you would use it:
+ 
     $dbh = DBI->connect('dbi:Sybase:server=troll', 'sa', '');
     $dbh->{syb_err_handler} = \&err_handler;
     $dbh->do("set showplan on");
@@ -762,13 +876,22 @@ Example:
     $dbh->do("exec someproc");    # get the showplan trace for this proc.
     $dbh->disconnect;
 
+B<NOTE> - if you set the error handler in the DBI->connect() call like this
+
+    $dbh = DBI->connect('dbi:Sybase:server=troll', 'sa', '', 
+		    { syb_err_handler => \&err_handler });
+
+then the err_handler() routine will get called if there is an error during
+       the connect itself. This is B<new> behavior in DBD::Sybase 0.95.
+
+
 =item syb_flush_finish (bool)
 
-If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
-any results remaining for the current command by actually fetching them.
+If $dbh->{syb_flush_finish} is set then $dbh->finish will drain any
+results remaining for the current command by actually fetching them.
 The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
-I<appears> to cause connections to hang or to fail in certain cases (although
-I've never witnessed this myself.)
+I<appears> to cause connections to hang or to fail in certain cases
+(although I've never witnessed this myself.)
 
 =item syb_dynamic_supported (bool)
 
@@ -867,6 +990,30 @@ attributes (in particular the current database) are different.
 
 Default: off
 
+=item syb_bind_empty_string_as_null (bool)
+
+B<New in 0.95>
+
+If this attribute is set then an empty string (i.e. "") passed as
+a parameter to an $sth->execute() call will be converted to a NULL
+value. If the attribute is not set then an empty string is converted to
+a single space.
+
+Default: off
+
+=item syb_cancel_request_on_error (bool)
+
+B<New in 0.95>
+
+If this attribute is set then a failure in a multi-statement request
+(for example, a stored procedure execution) will cause $sth->execute()
+to return failure, and will cause any other results from this request to 
+be discarded.
+
+The default value (B<on>) changes the behavior that DBD::Sybase exhibited
+up to version 0.94. 
+
+Default: on
 
 =back
 
@@ -908,6 +1055,12 @@ fetched, otherwis  you can call this in a loop to fetch chunks of data:
 	last unless $data;
 	print OUT $data;
     }
+
+The fetched data is still subject to Sybase's TEXTSIZE option (see the
+SET command in the Sybase reference manual). This can be manipulated with
+DBI's B<LongReadLen> attribute, but C<$dbh->{LongReadLen}> I<must> be 
+set before $sth->execute() is called to take effect (note that LongReadLen
+has no effect  when using DBD::Sybase with an MS-SQL server).
 
 B<Note>: The IMAGE or TEXT column that is to be fetched this way I<must> 
 be I<last> in the select list.
@@ -955,6 +1108,10 @@ Nov 15 1998 11:30AM
 =item DMY1_YYYY
 
 15/11/1998
+
+=item DMY2_YYYY
+
+15.11.1998
 
 =item YMD3_YYYY
 
@@ -1034,7 +1191,11 @@ element.
 
 When using standard SQL the default for IMAGE data is to be converted
 to a hex string, but you can use the I<syb_binary_images> handle attribute 
-to change this behaviour.
+to change this behaviour. Alternatively you can use something like
+
+    $binary = pack("H*", $hex_string);
+
+to do the conversion.
 
 IMAGE and TEXT datatypes can B<not> be passed as parameters using
 ?-style placeholders, and placeholders can't refer to IMAGE or TEXT 
@@ -1069,7 +1230,7 @@ The call sequence is:
     $sth->execute;
     while($d = $sth->fetchrow_arrayref) {
        # The data is in the second column
-       $len = $sth->func(2, $img, 0, 'ct_get_data');
+       $len = $sth->func(2, \$img, 0, 'ct_get_data');
     }
 
 ct_get_data() returns the number of bytes that were effectively fetched,
@@ -1250,6 +1411,46 @@ You can only use ?-style placeholders for statements that return a single
 result set, and the ? placeholders can only appear in a 
 B<WHERE> clause, in the B<SET> clause of an B<UPDATE> statement, or in the
 B<VALUES> list of an B<INSERT> statement. 
+
+The DBI docs mention the following regarding NULL values and placeholders:
+
+=over 4
+
+       Binding an `undef' (NULL) to the placeholder will not
+       select rows which have a NULL `product_code'! Refer to the
+       SQL manual for your database engine or any SQL book for
+       the reasons for this.  To explicitly select NULLs you have
+       to say "`WHERE product_code IS NULL'" and to make that
+       general you have to say:
+
+         ... WHERE (product_code = ? OR (? IS NULL AND product_code IS NULL))
+
+       and bind the same value to both placeholders.
+
+=back
+
+This will not work with a Sybase database server. If you attempt the 
+above construct you will get the following error:
+
+=over 4
+
+The datatype of a parameter marker used in the dynamic prepare statement could not be resolved.
+
+=back
+
+The specific problem here is that when using ? placeholders the prepare()
+operation is sent to the database server for parameter resoltion. This extracts
+the datatypes for each of the placeholders. Unfortunately the C<? is null>
+construct doesn't tie the ? placeholder with an existing table column, so
+the database server can't find the data type. As this entire operation happens
+inside the Sybase libraries there is no easy way for DBD::Sybase to work around
+it.
+
+Note that Sybase will normally handle the C<foo = NULL> construct the same way
+that other systems handle C<foo is NULL>, so the convoluted construct that
+is described above is not necessary to obtain the correct results when
+querying a Sybase database.
+
 
 The underlying API does not support ?-style placeholders for stored 
 procedures, but see the section on titled B<Stored Procedures and Placeholders>

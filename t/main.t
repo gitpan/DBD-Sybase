@@ -1,13 +1,13 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.6 2000/11/06 18:54:54 mpeppler Exp $
+# $Id: main.t,v 1.7 2002/01/23 00:10:49 mpeppler Exp $
 
 # Base DBD Driver Test
 
 use lib 'blib/lib';
 use lib 'blib/arch';
 
-BEGIN {print "1..14\n";}
+BEGIN {print "1..16\n";}
 END {print "not ok 1\n" unless $loaded;}
 use DBI;
 $loaded = 1;
@@ -146,6 +146,29 @@ $dbh->{syb_quoted_identifier} = 1;
     or print "not ok 14\n";
 
 $dbh->{syb_quoted_identifier} = 0;
+
+# Test multiple result sets, varying column names
+$sth = $dbh->prepare("
+select uid, name from sysusers where uid = -2
+select spid, kpid from master..sysprocesses where spid = \@\@spid
+");
+($rc = $sth->execute) 
+    and print "ok 15\n"
+    or print "not ok 15\n";
+
+$result_set = 0;
+do {
+    while($row = $sth->fetchrow_hashref) {
+	if($result_set == 1) {
+	    if(!$row->{spid}) {
+		print "not ok 16\n";
+	    } else {
+		print "ok 16\n";
+	    }
+	}
+    }
+    ++$result_set;
+} while($sth->{syb_more_results});
 
 
 $dbh->disconnect;

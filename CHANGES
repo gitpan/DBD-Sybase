@@ -1,4 +1,69 @@
-$Id: CHANGES,v 1.30 2001/12/13 01:05:25 mpeppler Exp $
+$Id: CHANGES,v 1.39 2002/10/23 21:58:07 mpeppler Exp $
+
+Release 0.95
+
+        Support for building DBD::Sybase in 64 bit mode with the
+        64 bit version of OpenClient on Solaris, HP-UX, AIX, etc.
+        (note that perl itself must also be built in 64 bit
+        mode for this to work!)
+
+	Added column_info() method.
+
+	Added G_EVAL flag to syb_err_handler calls.
+	Improved syb_err_handler handling (thanks to Matthew Persico)
+        Fixed memory leak when opening additional connections for multiple
+        statement handles on a single database handle (thanks to Stefan
+        Harbeck)
+        Applied minor patch by Alex Fridman to get to build on WinNT.
+	Force a ct_cancel() if, due to syb_do_proc_status, we force a 
+	failure on a request that could have more results pending (Blaise 
+	Lepeuple)
+	Added syb_cancel_request_on_error attribute (see bug 471).
+	Warning - the default value for this attribute changes the behavior
+	of $sth->execute() when there is a failure that is detected in
+	multi-statement requests.
+	Added syb_bind_empty_string_as_null attribute (see bug 446) to
+	allow user configurable empty string binding semantics (convert
+	to single space [default] or to NULL).
+
+	Bugs Fixed:
+
+	431 - fetchrow_hashref() has incorrect keys when retrieving
+              multiple result sets.
+        437 - imp_sth->numRows in st_next_result not always set.
+	444 - Incorrect example for ct_get_data(). ct_get_data() SEGV
+              if passed a non-reference for $image.
+        394 - $sth->{CursorName} fails hard.
+	449 - ct_get_data() limited to 32k
+	450 - Fix incorrect NULLABLE handling.
+	452 - Incorrect $sth->finish() handling in syb_flush_finish mode
+              (thanks to Steve Willer).
+        443 - $sth->fetch produces error if called after $sth->execute on
+	      statement that doesn't return any rows.
+	411 - statement handle attributes do not change between result sets.
+	430 - $dbh->prepare can return undef without triggering RaiseError.
+	436 - Problems with make test generating errors creating 
+              Makefile.aperl.
+	441 - amadmin who,sqm fails while in a transaction.
+	446 - Empty string converts to a space (fixed by making this
+	      configurable).
+	448 - define strncasecmp as strnicmp for Win32 systems.
+	454 - syb_err_handler won't catch connect-time error.
+	456 - ping still fails if connection is dead.
+	461 - Memory leak if NOT using placeholders in selects and
+	      calling execute() multiple times.
+	464 - Binding an empty string for a date field causes "1/1/1900"
+              to be inserted (instead of NULL).
+	469 - nsql error handling bug.
+	447 - syb_db_disconnect(): ct_con_drop() failed.
+	471 - Certain class of errors isn't detected by DBD::Sybase.
+
+
+        Documentation changes to explain why 
+         ... WHERE (product_code = ? OR (? IS NULL AND product_code IS NULL))
+        doesn't work with Sybase.
+	
+
 
 Release 0.94
 

@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.16 2001/12/13 01:05:26 mpeppler Exp $
+   $Id: dbdimp.h,v 1.20 2002/10/23 21:58:07 mpeppler Exp $
 
    Copyright (c) 1997-2001  Michael Peppler
 
@@ -94,9 +94,10 @@ struct imp_dbh_st {
     int       noChildCon;	/* Don't create child connections for
 				   simultaneous statement handles */
     int       failedDbUseFatal;
+    int       bindEmptyStringNull;
+    int       alwaysForceFailure; /* PR/471 */
 
-    char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
-					   used for error reporting */
+    char      *sql;
 };
 
 typedef struct phs_st {

@@ -1,4 +1,4 @@
-# $Id: CONFIG,v 1.7 1999/05/31 21:38:15 mpeppler Exp $
+# $Id: CONFIG,v 1.8 2002/01/23 00:10:48 mpeppler Exp $
 # Configuration file for DBD::Sybase.
 #
 # The Makefile.PL file attempts to set reasonable defaults for the
@@ -30,6 +30,11 @@ EXTRA_LIBS=
 # but if they are in some other place on your system then you can specify
 # that directory here:
 # DBI_INCLUDE=/usr/local/lib/perl5/site_perl/sun4-solaris/
+
+# BUILD_TYPE
+# Set this to 64 if you are building in 64 bit mode on a platform
+# that supports the 64bit OpenClient libraries (libct64.a, etc).
+# BUILD_TYPE=64
 
 
 # LINKTYPE

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: xblob.t,v 1.2 2001/07/03 15:53:24 mpeppler Exp $
+# $Id: xblob.t,v 1.3 2002/06/27 21:53:59 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -15,7 +15,7 @@ use DBI qw(:sql_types);
 $loaded = 1;
 print "ok 1\n";
 
-#DBI->trace(2);
+#DBI->trace(3);
 
 # Find the passwd file:
 @dirs = ('./.', './..', './../..', './../../..');
@@ -71,23 +71,28 @@ $sth->func('CS_SET', 2, {total_txtlen => length($image)}, 'ct_data_info') || pri
 $sth->func($image, length($image), 'ct_send_data') || print $sth->errstr, "\n";
 $sth->func('ct_finish_send') || print $sth->errstr, "\n";
 
-
+#$dbh->{LongReadLen} = 100000;
 $sth = $dbh->prepare("select id, data from blob_test");
+$dbh->{LongReadLen} = 100000;
 #DBI->trace(3);
 $sth->{syb_no_bind_blob} = 1;
 $sth->execute;
 my $heximg2 = '';
+my $size = 0;
 while(my $d = $sth->fetch) {
     my $data;
 #    open(OUT, ">/tmp/mp_conf.jpg") || die "Can't open /tmp/mp_conf.jpg: $!";
     while(1) {
 	my $read = $sth->func(2, \$data, 1024, 'ct_get_data');
 	$heximg2 .= unpack('H*', $data);
+	$size += $read;
 	last unless $read == 1024;
 #	print OUT $data;
     }
 #    close(OUT);
 }
+
+#warn "Got $size bytes\n";
 
 $heximg eq $heximg2 and print "ok 5\n"
     or print "not ok 5\n";

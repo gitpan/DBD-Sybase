@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.18 2001/11/20 21:04:06 mpeppler Exp $
+# $Id: Makefile.PL,v 1.20 2002/10/22 23:12:47 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -37,7 +37,7 @@ WriteMakefile('NAME'         => 'DBD::Sybase',
 	      OBJECT         => '$(O_FILES)',
 	      'VERSION_FROM' => 'Sybase.pm',
 	      'LDDLFLAGS'    => $lddlflags,
-	      'LDFLAGS'      => $ldflags,
+#	      'LDFLAGS'      => $ldflags,
 	      LINKTYPE       => $LINKTYPE,
 	      ($^O eq 'VMS' ? 
                (MAN3PODS    => { 'Sybase.pm' => 'blib/man3/DBD_Sybase.3' }) :
@@ -102,6 +102,8 @@ sub configure {
     die "Can't find any Sybase libraries in $SYBASE/lib" unless checkLib($SYBASE);
 
 
+    $inc_string = "-I$SYBASE/include";
+
     if($^O eq 'MSWin32') {
 	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib $attr{EXTRA_LIBS} -lm";
     } elsif($^O eq 'VMS') {
@@ -115,6 +117,32 @@ sub configure {
 	}
 	if($^O =~ /linux|freebsd/i) {
 	    $lib_string =~ s/ltcl/lsybtcl/;
+	}
+	if($attr{BUILD_TYPE} == 64) {
+	    $inc_string .= ' -DSYB_LP64';
+	    print "Running in 64bit mode - looking for '64' libraries...\n";
+	    opendir(SYBLIB,"$SYBASE/lib")
+		or die "Unable to opendir $SYBASE/lib: $!\n";
+	    
+	    my %libname = ();
+	    
+	    foreach ( readdir(SYBLIB) ) {
+		next unless -f "$SYBASE/lib/$_";
+		next unless /^lib(\S+)\.(so|a)/;
+		$libname{$1} = 1;
+	    }
+	
+	    closedir(SYBLIB);
+	    
+	    foreach ( split(/\s+/,$lib_string) ) {
+		next unless /^-l(\S+)/;
+		my $oldname = $1;
+		my $newname = $1 . '64';
+		next unless exists $libname{$newname};
+		print "Found -l$newname for -l$oldname\n";
+		$lib_string =~ s/-l$oldname\b/-l$newname/;
+	    }
+	    
 	}
     }
     
@@ -135,7 +163,7 @@ sub configure {
      }
     die "Can't find the DBI include files. Please set DBI_INCLUDE in CONFIG"
 	if !$dbidir;
-    $inc_string = "-I$SYBASE/include -I$dbidir";
+    $inc_string .= " -I$dbidir";
     if($attr{LINKTYPE}) {
 	$LINKTYPE = $attr{LINKTYPE}
     }
@@ -146,8 +174,12 @@ sub getExtraLibs {
     my $cfg = shift;
 
     my $lib = "$dir/lib";
+    my $file = "$lib/libct.a";
+    if(!-e $file) {
+	$file = "$lib/libct64.a";
+    }
 
-    my $version = `strings $lib/libct.a`;
+    my $version = `strings $file`;
     $version =~ /Sybase Client-Library\/([^\/]+)\//;
     $version = $1;
     print "Sybase OpenClient $version found.\n";
@@ -224,7 +256,7 @@ EOF
 }
 
 sub getAns {
-    my $ans = <>;
+    my $ans = <STDIN>;
     chomp($ans);
     $ans;
 }
