@@ -1,6 +1,6 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.11 2003/04/03 19:15:13 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.12 2003/08/30 00:34:30 mpeppler Exp $
    Copyright (c) 1997-2003 Michael Peppler
 
    Uses from Driver.xst
@@ -19,7 +19,6 @@ MODULE = DBD::Sybase    PACKAGE = DBD::Sybase
 
 I32
 constant()
-    PROTOTYPE:
     ALIAS:
     CS_ROW_RESULT           = 4040
     CS_CURSOR_RESULT        = 4041

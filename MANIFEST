@@ -23,6 +23,7 @@ t/exec.t
 t/nsql.t
 t/xblob.t
 t/screen.jpg
+t/_test.pm
 eg/README
 eg/Show.cgi
 eg/dbschema.pl

@@ -1,9 +1,13 @@
 #!/usr/local/bin/perl
 #
-# $Id: autocommit.t,v 1.1 1999/06/22 02:00:05 mpeppler Exp $
+# $Id: autocommit.t,v 1.2 2003/09/08 21:30:22 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
+
+use lib 't';
+
+use _test;
 
 use vars qw($Pwd $Uid);
 
@@ -15,29 +19,9 @@ print "ok 1\n";
 
 #DBI->trace(2);
 
-# Find the passwd file:
-@dirs = ('./.', './..', './../..', './../../..');
-foreach (@dirs)
-{
-    if(-f "$_/PWD")
-    {
-	open(PWD, "$_/PWD") || die "$_/PWD is not readable: $!\n";
-	while(<PWD>)
-	{
-	    chop;
-	    s/^\s*//;
-	    next if(/^\#/ || /^\s*$/);
-	    ($l, $r) = split(/=/);
-	    $Uid = $r if($l eq UID);
-	    $Pwd = $r if($l eq PWD);
-	    $Srv = $r if($l eq SRV);
-	}
-	close(PWD);
-	last;
-    }
-}
+($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError => 0});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
 $dbh and print "ok 2\n"
     or print "not ok 2\n";

@@ -1,13 +1,16 @@
 #!/usr/local/bin/perl
 #
-# $Id: xblob.t,v 1.3 2002/06/27 21:53:59 mpeppler Exp $
+# $Id: xblob.t,v 1.4 2003/09/08 21:30:22 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
+use lib 't';
 
 #use strict;
 
-use vars qw($Pwd $Uid $Srv $loaded);
+use _test;
+
+use vars qw($Pwd $Uid $Srv $Db $loaded);
 
 BEGIN {print "1..6\n";}
 END {print "not ok 1\n" unless $loaded;}
@@ -17,29 +20,10 @@ print "ok 1\n";
 
 #DBI->trace(3);
 
-# Find the passwd file:
-@dirs = ('./.', './..', './../..', './../../..');
-foreach (@dirs)
-{
-    if(-f "$_/PWD")
-    {
-	open(PWD, "$_/PWD") || die "$_/PWD is not readable: $!\n";
-	while(<PWD>)
-	{
-	    chop;
-	    s/^\s*//;
-	    next if(/^\#/ || /^\s*$/);
-	    ($l, $r) = split(/=/);
-	    $Uid = $r if($l eq UID);
-	    $Pwd = $r if($l eq PWD);
-	    $Srv = $r if($l eq SRV);
-	}
-	close(PWD);
-	last;
-    }
-}
+($Uid, $Pwd, $Srv, $Db) = _test::get_info();
+
 #DBI->trace(3);
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=tempdb", $Uid, $Pwd, {PrintError=>1});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError=>1});
 #exit;
 $dbh and print "ok 2\n"
     or print "not ok 2\n";
@@ -67,7 +51,7 @@ while($sth->fetch) {
     $sth->func('CS_GET', 2, 'ct_data_info') || print $sth->errstr, "\n";
 }
 $sth->func('ct_prepare_send') || print $sth->errstr, "\n";
-$sth->func('CS_SET', 2, {total_txtlen => length($image)}, 'ct_data_info') || print $sth->errstr, "\n";
+$sth->func('CS_SET', 2, {total_txtlen => length($image), log_on_update=>1}, 'ct_data_info') || print $sth->errstr, "\n";
 $sth->func($image, length($image), 'ct_send_data') || print $sth->errstr, "\n";
 $sth->func('ct_finish_send') || print $sth->errstr, "\n";
 
@@ -96,6 +80,14 @@ while(my $d = $sth->fetch) {
 
 $heximg eq $heximg2 and print "ok 5\n"
     or print "not ok 5\n";
+
+open(ONE, ">/tmp/hex1");
+print ONE $heximg;
+close(ONE);
+open(TWO, ">/tmp/hex2");
+print TWO $heximg2;
+close(TWO);
+
 
 $rc = $dbh->do("drop table blob_test");
 

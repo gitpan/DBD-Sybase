@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.43 2003/04/03 19:15:13 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.45 2003/09/08 21:30:22 mpeppler Exp $
 
    Copyright (c) 1997-2003  Michael Peppler
 
@@ -165,6 +165,9 @@ CS_CLIENTMSG	*errmsg;
 	sprintf(buff, "SEVERITY = (%ld) NUMBER = (%ld)\n",
 		CS_SEVERITY(errmsg->msgnumber), CS_NUMBER(errmsg->msgnumber));
 	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+	sprintf(buff, "Server %s, database %s\n",
+		imp_dbh->server, imp_dbh->curr_db);
+	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), "Message String: ");
 	sv_catpv(DBIc_ERRSTR(imp_dbh), errmsg->msgstring);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
@@ -224,9 +227,6 @@ CS_SERVERMSG	*srvmsg;
     imp_dbh_t *imp_dbh = NULL;
     char buff[1024];
 
-    if(srvmsg->msgnumber == 5701 || srvmsg->msgnumber == 5703 
-       || srvmsg->msgnumber == 5704)
-	return CS_SUCCEED;
 
     /* add check on connection not being NULL (PR/477)
        just to be on the safe side - freetds can call the server
@@ -234,6 +234,47 @@ CS_SERVERMSG	*srvmsg;
     if(connection && (ct_con_props(connection, CS_GET, CS_USERDATA,
 		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
 	croak("Panic: servermsg_cb: Can't find handle from connection");
+
+    /* Track the "current" database */
+    /* Borrowed from sqsh's cmd_connect.c */
+    if(srvmsg->msgnumber == 5701 || srvmsg->msgnumber == 5703 
+       || srvmsg->msgnumber == 5704) 
+    {
+	char *c;
+	int i;
+	if(srvmsg->text != NULL && (c = strchr( srvmsg->text, '\'' )) != NULL) 
+	{
+	    i = 0;
+	    for( ++c; i <= 30 && *c != '\0' && *c != '\''; ++c )
+		buff[i++] = *c;
+	    buff[i] = '\0';
+	    
+	    /*
+	     * On some systems, if the charset is mis-configured in the
+	     * SQL Server, it will come back as the string "<NULL>".  If
+	     * this is the case, then we want to ignore this value.
+	     */
+	    if (strcmp( buff, "<NULL>" ) != 0)
+	    {
+		switch (srvmsg->msgnumber) 
+		{
+		  case 5701: 
+		    if(imp_dbh && DBIc_ACTIVE(imp_dbh) && 
+		       imp_dbh->connection == connection) {
+			strcpy(imp_dbh->curr_db, buff);
+		    }
+		    break;
+		  case 5703: /* Language */
+		    break;
+		  case 5704: /* charset */
+		    break;
+		  default:
+		    break;
+		}
+	    }
+	}
+	return CS_SUCCEED;
+    }
 
     if(imp_dbh && imp_dbh->err_handler) {
 	dSP;
@@ -303,22 +344,22 @@ CS_SERVERMSG	*srvmsg;
 	sprintf(buff, "number=%ld severity=%ld ",
 		srvmsg->msgnumber, srvmsg->severity);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-	sprintf(buff, "state=%ld line=%ld ",
+	sprintf(buff, "state=%ld line=%ld",
 		srvmsg->state, srvmsg->line);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
 	if (srvmsg->svrnlen > 0) {
- 	    sv_catpv(DBIc_ERRSTR(imp_dbh), "server=");
+ 	    sv_catpv(DBIc_ERRSTR(imp_dbh), " server=");
  	    sv_catpv(DBIc_ERRSTR(imp_dbh), srvmsg->svrname);
 	}
 	if (srvmsg->proclen > 0) {
- 	    sv_catpv(DBIc_ERRSTR(imp_dbh), "procedure=");
+ 	    sv_catpv(DBIc_ERRSTR(imp_dbh), " procedure=");
  	    sv_catpv(DBIc_ERRSTR(imp_dbh), srvmsg->proc);
 	}
 	
- 	sv_catpv(DBIc_ERRSTR(imp_dbh), "text=");
+ 	sv_catpv(DBIc_ERRSTR(imp_dbh), " text=");
  	sv_catpv(DBIc_ERRSTR(imp_dbh), srvmsg->text);
 	if(imp_dbh->showSql) {
- 	    sv_catpv(DBIc_ERRSTR(imp_dbh), "Statement=");
+ 	    sv_catpv(DBIc_ERRSTR(imp_dbh), " Statement=");
  	    sv_catpv(DBIc_ERRSTR(imp_dbh), imp_dbh->sql);
  	    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
 	}
@@ -437,6 +478,10 @@ CS_DATAFMT *column;
 	
       case CS_DATETIME_TYPE:
       case CS_DATETIME4_TYPE:
+#if defined(CS_DATE_TYPE)
+      case CS_DATE_TYPE:
+      case CS_TIME_TYPE:
+#endif
 	len = 30;
 	break;
 	
@@ -628,7 +673,7 @@ void syb_init(dbistate)
 	/*fprintf(stderr, "Got hostname: %s\n", hostname);*/
     }
 
-    if(dbis->debug >= 2) {
+    if(DBIS->debug >= 2) {
 	char *p = "";
 	if((sv = perl_get_sv("DBD::Sybase::VERSION", FALSE)))
 	    p = SvPV(sv, lna);
@@ -646,7 +691,7 @@ syb_set_timeout(timeout)
     if(timeout <= 0)
 	timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
 				   default no limit */
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
     if((retcode = ct_config(context, CS_SET, CS_TIMEOUT, &timeout,
 			    CS_UNUSED, NULL)) != CS_SUCCEED)
@@ -726,6 +771,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     imp_dbh->hostname[0]   = 0;
     imp_dbh->scriptName[0] = 0;
     imp_dbh->database[0]   = 0;
+    imp_dbh->curr_db[0]    = 0;
     imp_dbh->encryptPassword[0]   = 0;
     imp_dbh->showSql       = 0;
     imp_dbh->showEed       = 0;
@@ -794,7 +840,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     int len;
 
     if(imp_dbh->ifile[0]) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_IFILE,%s)\n",
 		    imp_dbh->ifile);
 	if((retcode = ct_config(context, CS_GET, CS_IFILE, ofile, 255, NULL))
@@ -814,7 +860,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	if(timeout <= 0)
 	    timeout = 60;	/* set negative or 0 length timeout to 
 				   default 60 seconds */
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_LOGIN_TIMEOUT,%d)\n", timeout);
 	if((retcode = ct_config(context, CS_SET, CS_LOGIN_TIMEOUT, &timeout,
 				CS_UNUSED, NULL)) != CS_SUCCEED)
@@ -825,7 +871,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	if(timeout <= 0)
 	    timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
 					   default no limit */
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
 	if((retcode = ct_config(context, CS_SET, CS_TIMEOUT, &timeout,
 				CS_UNUSED, NULL)) != CS_SUCCEED)
@@ -847,7 +893,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    return 0;
 	}
 	if(imp_dbh->language[0] != 0) {
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_LANG,%s)\n", imp_dbh->language);
 	    if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
 			   (CS_CHAR*)imp_dbh->language, CS_NULLTERM, 
@@ -858,7 +904,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
 	if(imp_dbh->charset[0] != 0) {
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_CHARSET,%s)\n", imp_dbh->charset);
 	    if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
 			   (CS_CHAR*)imp_dbh->charset, CS_NULLTERM, 
@@ -909,7 +955,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    value = CS_TDS_50;
 
 	if(value) {
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_con_props(CS_TDS_VERSION,%s)\n", imp_dbh->tdsLevel);
 
 	    if (ct_con_props( connection, CS_SET, CS_TDS_VERSION, (CS_VOID*)&value,
@@ -924,7 +970,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 
     if (imp_dbh->packetSize[0] != 0) {
 	int i = atoi(imp_dbh->packetSize);
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_con_props(CS_PACKETSIZE,%d)\n", i);
 	if (ct_con_props( connection, CS_SET, CS_PACKETSIZE, (CS_VOID*)&i,
 			  CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
@@ -1000,7 +1046,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
     }
 
-    if(imp_dbh->database[0]) {
+    if(imp_dbh->database[0] || imp_dbh->curr_db[0]) {
 	int ret = syb_db_use(imp_dbh, connection);
 	if(imp_dbh->failedDbUseFatal && ret < 0) {
 	    /* cleanup, and return NULL */
@@ -1016,7 +1062,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     if(imp_dbh->chainedSupported) {
 	CS_BOOL value = CS_FALSE;
 
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> checking for chained transactions\n");
 	retcode = ct_options(connection, CS_SET, CS_OPT_CHAINXACTS, 
 			     &value, CS_UNUSED, NULL);
@@ -1024,7 +1070,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    imp_dbh->doRealTran = 1;
 	    imp_dbh->chainedSupported = 0;
 	}
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> chained transactions are %s supported\n", retcode == CS_FAIL ? "not" : "");
     }
 
@@ -1065,12 +1111,19 @@ syb_db_use(imp_dbh, connection)
     CS_INT     restype;
     char       statement[255];
     int        retval = 0;
+    char       *db;
 
     if(!cmd)
 	return -1;
 
-    sprintf(statement, "use %s", imp_dbh->database);
-    if(dbis->debug >= 2)
+    if(DBIc_ACTIVE(imp_dbh) && imp_dbh->curr_db[0])
+	db = imp_dbh->curr_db;
+    else
+	db = imp_dbh->database;
+
+    sprintf(statement, "use %s", db);
+
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_use() -> ct_command(%s)\n", statement);
     ret = ct_command(cmd, CS_LANG_CMD, statement, CS_NULLTERM, CS_UNUSED);
     if(ret != CS_SUCCEED) {
@@ -1163,7 +1216,7 @@ int      syb_db_commit(dbh, imp_dbh)
 	sprintf(buff, "\nCOMMIT TRAN %s\n", imp_dbh->tranName);
     else
 	strcpy(buff, "\nCOMMIT TRAN\n");
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_commit() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
 		     CS_NULLTERM, CS_UNUSED);
@@ -1173,11 +1226,11 @@ int      syb_db_commit(dbh, imp_dbh)
     if(ct_send(cmd) != CS_SUCCEED)
 	return 0;
 
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_commit() -> ct_send() OK\n");
 
     while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_commit() -> ct_results(%d) == %d\n",
 		    restype, retcode);
 
@@ -1213,7 +1266,7 @@ int      syb_db_rollback(dbh, imp_dbh)
 	sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
     else
 	strcpy(buff, "\nROLLBACK TRAN\n");
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_rollback() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
 		     CS_NULLTERM, CS_UNUSED);
@@ -1223,11 +1276,11 @@ int      syb_db_rollback(dbh, imp_dbh)
     if(ct_send(cmd) != CS_SUCCEED)
 	return 0;
 
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_rollback() -> ct_send() OK\n");
 
     while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_rollback() -> ct_results(%d) == %d\n",
 		    restype, retcode);
 
@@ -1258,13 +1311,13 @@ static int syb_db_opentran(dbh, imp_dbh)
     sprintf(buff, "\nBEGIN TRAN %s\n", imp_dbh->tranName);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
 			 CS_NULLTERM, CS_UNUSED);
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_opentran() -> ct_command(%s) = %d\n", 
 		buff, retcode);
     if(retcode != CS_SUCCEED) 
 	return 0;
     retcode = ct_send(cmd);
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_opentran() -> ct_send() = %d\n",
 		retcode);
 
@@ -1272,7 +1325,7 @@ static int syb_db_opentran(dbh, imp_dbh)
 	return 0;
 
     while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_opentran() -> ct_results(%d) == %d\n",
 		    restype, retcode);
 
@@ -1301,7 +1354,7 @@ int      syb_db_disconnect(dbh, imp_dbh)
 	    syb_db_rollback(dbh, imp_dbh);
     }
 
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_db_disconnect() -> ct_close()\n");
     if((retcode = ct_close(imp_dbh->connection, CS_FORCE_CLOSE)) != CS_SUCCEED)
 	PerlIO_printf(DBILOGFP, "    syb_db_disconnect(): ct_close() failed\n");
@@ -1357,7 +1410,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    } else {
 		imp_dbh->doRealTran = 1;
 	    }
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_db_STORE() -> syb_chained_txn => %d\n", on);
 	    if(!autocommit) {
 		CS_BOOL    value = on ? CS_TRUE : CS_FALSE;
@@ -1365,7 +1418,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 		ret = ct_options(imp_dbh->connection, CS_SET,
 				 CS_OPT_CHAINXACTS, 
 				 &value, CS_UNUSED, NULL);
-		if(dbis->debug >= 2)
+		if(DBIS->debug >= 2)
 		    PerlIO_printf(DBILOGFP, "    syb_db_STORE() -> syb_chained_txn AutoCommit off CS_OPT_CHAINXACTS(%d) => %d\n", value, ret);
 	    }
 
@@ -1636,9 +1689,9 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     }
     if (kl == 15 && strEQ(key, "syb_chained_txn")) {
 	if(imp_dbh->doRealTran)
-	    retsv = newSViv(1);
-	else
 	    retsv = newSViv(0);
+	else
+	    retsv = newSViv(1);
     }
     if (kl == 18 && strEQ(key, "syb_check_tranmode")) {
 	CS_INT value;
@@ -1854,7 +1907,7 @@ dbd_preparse(imp_sth, statement)
 		}
 	    } while(*(++p));
 	}
-	if (dbis->debug >= 2)
+	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    dbd_preparse parameter %s (%s)\n",
 			  ((phs_t*)(void*)SvPVX(phs_sv))->name,
 			  ((phs_t*)(void*)SvPVX(phs_sv))->varname);
@@ -1863,7 +1916,7 @@ dbd_preparse(imp_sth, statement)
     *dest = '\0';
     if (imp_sth->all_params_hv) {
 	DBIc_NUM_PARAMS(imp_sth) = (int)HvKEYS(imp_sth->all_params_hv);
-	if (dbis->debug >= 2)
+	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    dbd_preparse scanned %d distinct placeholders\n",
 		(int)DBIc_NUM_PARAMS(imp_sth));
     }
@@ -1885,6 +1938,12 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
+    /* Don't try to initiate a new command if the connection isn't active! */
+    if (!DBIc_ACTIVE(imp_dbh)) {
+	syb_set_error(imp_dbh, -1, "Database disconnected");
+        return 0;
+    }
+
     if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
 	if(imp_dbh->noChildCon) { /* inhibit child connections to be created */
 	    /*warn("Can't create child connections when syb_no_chld_con is set");*/
@@ -1893,7 +1952,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	}
 	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
 	    croak("Panic: Can't have multiple statement handles on a single database handle when AutoCommit is OFF");
-	if (dbis->debug >= 2)
+	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_prepare() parent has active kids - opening new connection\n");
 	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL) {
 	    return 0;
@@ -1929,9 +1988,9 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    if(ret != CS_SUCCEED || val == CS_FALSE)
 		croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
 	    
-	    sprintf(imp_sth->dyn_id, "DBD%x", (int)tt++);
+	    sprintf(imp_sth->dyn_id, "DBD_%d_%x", getpid(), (int)tt++);
 	    
-	    if (dbis->debug >= 2)
+	    if (DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
 			imp_sth->dyn_id);
 	    
@@ -1967,11 +2026,11 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    ret = ct_send(imp_sth->cmd);
 	    if(ret != CS_SUCCEED)
 		warn("ct_send(CS_DESCRIBE_INPUT) returned %d", ret);
-	    if (dbis->debug >= 3)
+	    if (DBIS->debug >= 3)
 		PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_DESCRIBE_INPUT) for %s\n",
 			imp_sth->dyn_id);
 	    while((ret = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED) {
-		if (dbis->debug >= 3)
+		if (DBIS->debug >= 3)
 		    PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_results(CS_DESCRIBE_INPUT) for %s - restype %d\n",
 			imp_sth->dyn_id, restype);
 		if(restype == CS_DESCRIBE_RESULT) {
@@ -1988,14 +2047,14 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 		    if(ret != CS_SUCCEED)
 			warn("ct_res_info(CS_DESCRIBE_INPUT) returned %d",
 			     ret);
-		    if (dbis->debug >= 3)
+		    if (DBIS->debug >= 3)
 			PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_res_info(CS_DESCRIBE_INPUT) statement has %d parameters\n", num_param);
 		    for(i = 1; i <= num_param; ++i) {
 			sprintf(name, ":p%d", i);
 			svp = hv_fetch(imp_sth->all_params_hv, name, strlen(name), 0);
 			phs = ((phs_t*)(void*)SvPVX(*svp));
 			ct_describe(imp_sth->cmd, i, &phs->datafmt);
-			if (dbis->debug >= 3)
+			if (DBIS->debug >= 3)
 			    PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_describe(CS_DESCRIBE_INPUT) col %d, type %d, status %d, length %d\n",
 				    i, phs->datafmt.datatype, 
 				    phs->datafmt.status, phs->datafmt.maxlength);
@@ -2016,7 +2075,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    if(!syb_st_describe_proc(imp_sth, statement)) {
 		croak("DBD::Sybase: describe_proc failed!\n");
 	    }
-	    if (dbis->debug >= 2)
+	    if (DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    describe_proc: procname = %s\n", 
 			imp_sth->proc);
 
@@ -2064,75 +2123,6 @@ static int syb_st_describe_proc(imp_sth, statement)
     strcpy(imp_sth->proc, tok);
     free(buff);
     return 1;
-
-
-/* ahem. this stuff really doesn't work yet */
-#if 0
-    char buff[256];
-    char *db = "";
-    char *owner = "dbo";
-    char *proc;
-    char *p, *q;
-
-    char sql[256];  /* When this stuff does work, make this a char *sql and dynamically allocate/size/deallocate it */
-
-    /* statement should be in the form
-       exec db.owner.proc ...
-       db and owner are both optional */
-    
-    strncpy(statement, buff, 255);
-    p = &buff[0];
-    while(isspace(*p) && *p)
-	++p;
-    while(!isspace(*p) && *p)
-	++p;			/* skip over exec(ute) */
-    while(isspace(*p) && *p)
-	++p;			/* skip over any additional space... */
-    /* now put a \0 byte at the end of the proc name */
-    q = p;
-    while(!isspace(*q) && *q)
-	++q;
-    *q = 0;
-    /* if there is no . then we have the proc name... */
-    if(!(q = strchr(p, '.'))) {
-	proc = p;
-	db = "";
-	owner = "dbo";
-    } else {
-	*q++ = 0;
-	db = p;
-	p = q;
-	if((q = strchr(p, '.'))) {
-	    *q++ = 0;
-	    owner = p;
-	    proc = q;
-	}
-	if(!*owner)
-	    owner = "dbo";
-    }
-    PerlIO_printf(DBILOGFP, " describe_proc: %s %s %s\n", db, owner, proc);
-
-    if(db && *db) {
-	sprintf(sql, "
-select c.colid, c.name, c.usertype, c.prec, c.scale 
- from %s..sysobjects o, %s..syscolumns c, %s..sysusers u
- where c.id = o.id 
-   and o.name = '%s'
-   and o.type = 'P'
-   and o.uid = u.uid
-   and u.name = '%s'
-", db, db, db, proc, owner);
-    } else {
-	sprintf(sql, "
-select c.colid, c.name, c.usertype, c.prec, c.scale 
- from sysobjects o, syscolumns c
- where c.id = o.id 
-   and o.name = '%s'
-   and o.type = 'P'
-   and o.uid = user_id(u.uid
-   and u.name = '%s'", proc, owner);
-    }
-#endif    
 }
 
 int      syb_st_rows(sth, imp_sth)
@@ -2187,7 +2177,7 @@ describe(imp_sth, restype)
 	imp_sth->numCols = 0;
 	goto GoodBye;
     }
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    ct_res_info() returns %d columns\n", numCols);
 
     DBIc_NUM_FIELDS(imp_sth) = numCols;
@@ -2239,7 +2229,7 @@ describe(imp_sth, restype)
 	    sprintf(imp_sth->datafmt[i].name, "%s(%d)", agg_op_name, agg_op);
 	}
 
-	if(dbis->debug >= 3)
+	if(DBIS->debug >= 3)
 	    PerlIO_printf(DBILOGFP, "    ct_describe(%d): type = %d, maxlen = %d\n",
 		    i, imp_sth->datafmt[i].datatype,
 		    imp_sth->datafmt[i].maxlength);
@@ -2335,7 +2325,7 @@ describe(imp_sth, restype)
 	    cleanUp(imp_sth);
 	    break;
 	}
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    describe() -> col %d, type %d, realtype %d\n", i, imp_sth->coldata[i].type, imp_sth->coldata[i].realType);
 	
     }
@@ -2360,7 +2350,7 @@ st_next_result(sth, imp_sth)
     imp_sth->numRows = -1;
 
     while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    st_next_result() -> ct_results(%d) == %d\n",
 		    restype, retcode);
 
@@ -2391,7 +2381,7 @@ st_next_result(sth, imp_sth)
 		      SV *sv = hv_iterval(hv, he);
 
 		      if(strnEQ(key, "NAME", 4)) {
-			  if(dbis->debug >= 3)
+			  if(DBIS->debug >= 3)
 			      PerlIO_printf(DBILOGFP, 
 			       "    st_next_result() -> delete key %s (%s) from cache\n",
 					    key, neatsvpv(sv, 0));
@@ -2401,17 +2391,18 @@ st_next_result(sth, imp_sth)
 		  }
 	      }
 	      retcode = describe(imp_sth, restype);
-	      if(dbis->debug >= 2)
+	      if(DBIS->debug >= 2)
 		  PerlIO_printf(DBILOGFP, "describe() retcode = %d\n", retcode);
 
-	      if(restype == CS_STATUS_RESULT && (imp_sth->doProcStatus ||
-		  imp_sth->dyn_execed)) 
+	      if(restype == CS_STATUS_RESULT && 
+		 (imp_sth->doProcStatus ||
+		  (imp_sth->dyn_execed && imp_sth->type == 0))) 
 	      {
 		  CS_INT rows_read;
 		  retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read);
 		  if(retcode == CS_SUCCEED) {
 		      imp_sth->lastProcStatus = imp_sth->coldata[0].value.i;
-		      if(dbis->debug >= 2)
+		      if(DBIS->debug >= 2)
 			  PerlIO_printf(DBILOGFP, "describe() proc status code = %d\n", imp_sth->lastProcStatus);
 		      if(imp_sth->lastProcStatus != 0) {
 			  failFlag = 1;
@@ -2429,15 +2420,16 @@ st_next_result(sth, imp_sth)
 				   *NOT* a status result set */
 	}
     }
-    if(dbis->debug >= 2)
-	PerlIO_printf(DBILOGFP, "ct_results() final retcode = %d\n", retcode);
+    if(DBIS->debug >= 2)
+	PerlIO_printf(DBILOGFP, "ct_results(%d) final retcode = %d\n", 
+		      restype, retcode);
   Done:
 
     /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
        does NOT return CS_CMD_FAIL for constraint errors when
        inserting/updating data using ?-style placeholders. */
 
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    st_next_result() -> lasterr = %d, lastsev = %d\n", imp_dbh->lasterr, imp_dbh->lastsev);
 
     /* Only force a failure if there are no rows to be fetched (ie on a
@@ -2451,10 +2443,10 @@ st_next_result(sth, imp_sth)
 	    restype != CS_COMPUTE_RESULT )) {
 
 	    failFlag = 1;
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    st_next_result() -> restype is not data result or syb_cancel_request_on_error is TRUE, force failFlag\n");
 	} else {
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    st_next_result() -> restype is data result, do NOT force failFlag\n");
 	}
     }
@@ -2462,7 +2454,7 @@ st_next_result(sth, imp_sth)
     /* Cancel the whole thing if we force a failure */
     /* Blaise Lepeuple, 9/26/02 */
     if(failFlag && retcode != CS_FAIL) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    st_next_result() -> failFlag set - clear request\n");
 	syb_st_finish(sth, imp_sth);
     }
@@ -2470,6 +2462,11 @@ st_next_result(sth, imp_sth)
 
     if(failFlag || retcode == CS_FAIL || retcode == CS_CANCELED)
 	return CS_CMD_FAIL;
+
+    /* FreeTDS added a result code CS_END_RESULTS */
+    /* Do the right thing with it Frederick Staats, 6/26/03 */
+    if(retcode == CS_END_RESULTS)
+	restype = CS_CMD_DONE;
 
     imp_sth->lastResType = restype;
   
@@ -2485,15 +2482,6 @@ syb_st_execute(sth, imp_sth)
     D_imp_dbh_from_sth;
     int restype;
 
-#if 0
-    /* If this handle is still active call finish()... */
-    if(imp_sth->moreResults) {
-	int finish = imp_dbh->flushFinish;
-	imp_dbh->flushFinish = 1;
-	syb_st_finish(sth, imp_sth);
-	imp_dbh->flushFinish = finish;
-    }
-#endif
 
     imp_dbh->lasterr = 0;
     imp_dbh->lastsev = 0;
@@ -2512,21 +2500,21 @@ syb_st_execute(sth, imp_sth)
 	}
 	if(ct_command(imp_sth->cmd, CS_LANG_CMD, imp_sth->statement,
 		      CS_NULLTERM, CS_UNUSED) != CS_SUCCEED) {
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
 	    return -2;
 	}
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_command() OK\n");
     }
 
     if(ct_send(imp_sth->cmd) != CS_SUCCEED) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_send() failed\n");
 	
 	return -2;
     }
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_send() OK\n");
 
     imp_sth->exec_done = 1;
@@ -2534,7 +2522,7 @@ syb_st_execute(sth, imp_sth)
     restype = st_next_result(sth, imp_sth);
 
     if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, 
 			  "    syb_st_execute() -> got %s: resetting ACTIVE, moreResults, dyn_execed\n",
 			  restype == CS_CMD_DONE ? "CS_CMD_DONE" : "CS_CMD_FAIL");
@@ -2562,7 +2550,7 @@ syb_st_cancel(sth, imp_sth)
     CS_CONNECTION *connection = imp_sth->connection ? imp_sth->connection : 
 	imp_dbh->connection;
 
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_st_cancel() -> ct_cancel(CS_CANCEL_ATTN)\n");
 
     if(ct_cancel(connection, NULL, CS_CANCEL_ATTN) == CS_FAIL) {
@@ -2710,12 +2698,12 @@ syb_st_fetch(sth, imp_sth)
 				   result sets */
 
 	  restype = st_next_result(sth, imp_sth);
-	  if(dbis->debug >= 2)
+	  if(DBIS->debug >= 2)
 	      PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> st_next_results() == %d\n",
 		      restype);
 
 	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
-	      if(dbis->debug >= 2)
+	      if(DBIS->debug >= 2)
 		  PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> resetting ACTIVE, moreResults, dyn_execed\n");
 	      imp_sth->moreResults = 0;
 	      imp_sth->dyn_execed = 0;
@@ -2775,7 +2763,7 @@ int      syb_st_finish(sth, imp_sth)
 	imp_dbh->connection;
 
     if (imp_dbh->flushFinish) {
-	if(dbis->debug >= 2)
+	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_finish() -> flushing\n");
 	while (DBIc_ACTIVE(imp_sth) && !imp_dbh->isDead) {
 	    AV *retval;
@@ -2787,14 +2775,14 @@ int      syb_st_finish(sth, imp_sth)
     else {
 	if (DBIc_ACTIVE(imp_sth)) {
 #if defined(ROGUE)
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_st_finish() -> ct_cancel(CS_CANCEL_CURRENT)\n");
 	    if(ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT) == CS_FAIL) {
 		  ct_close(connection, CS_FORCE_CLOSE);
 		  imp_dbh->isDead = 1;
 	    }	  
 #else  
-	    if(dbis->debug >= 2)
+	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_st_finish() -> ct_cancel(CS_CANCEL_ALL)\n");
 	    if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
 		  ct_close(connection, CS_FORCE_CLOSE);
@@ -2803,7 +2791,7 @@ int      syb_st_finish(sth, imp_sth)
 #endif
 	}
     }
-    if(dbis->debug >= 2)
+    if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_st_finish() -> resetting ACTIVE, moreResults, dyn_execed\n");
     imp_sth->moreResults = 0;
     imp_sth->dyn_execed = 0;
@@ -2817,7 +2805,7 @@ static void dealloc_dynamic(imp_sth)
     CS_RETCODE ret;
     CS_INT restype;
 	
-    if (dbis->debug >= 2)
+    if (DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_st_destroy: ct_dynamic(CS_DEALLOC) for %s\n",
 		imp_sth->dyn_id);
     
@@ -2861,11 +2849,11 @@ void     syb_st_destroy(sth, imp_sth)
     CS_RETCODE ret;
     dTHR;
 
-    if (dbis->debug >= 2)
+    if (DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    syb_st_destroy: called on %x...\n", imp_sth);
 
     if (PL_dirty) {
-	if (dbis->debug >= 2)
+	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy: dirty set, skipping\n");
 	return;
     }
@@ -2878,7 +2866,7 @@ void     syb_st_destroy(sth, imp_sth)
     /* moved from the prepare() call - as we need to have this around
        to re-execute non-dynamic statements... */
     if(imp_sth->statement != NULL) {
-	if(dbis->debug >= 2) {
+	if(DBIS->debug >= 2) {
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy(): freeing imp_sth->statement\n");
 	}
 	safefree(imp_sth->statement);
@@ -2888,12 +2876,12 @@ void     syb_st_destroy(sth, imp_sth)
     cleanUp(imp_sth);
 
     ret = ct_cmd_drop(imp_sth->cmd);
-    if(dbis->debug >= 2) {
+    if(DBIS->debug >= 2) {
 	PerlIO_printf(DBILOGFP, "    syb_st_destroy(): cmd dropped: %d\n", ret);
     }
     if(imp_sth->connection) {
 	ret = ct_close(imp_sth->connection, CS_FORCE_CLOSE);
-	if(dbis->debug >= 2) {
+	if(DBIS->debug >= 2) {
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy(): connection closed: %d\n", ret);
 	}
 	ct_con_drop(imp_sth->connection);
@@ -2932,7 +2920,7 @@ int      syb_ct_get_data(sth, imp_sth, column, bufrv, buflen)
     if(buflen == 0)
 	buflen = imp_sth->datafmt[column-1].maxlength;
 
-    if(dbis->debug >= 3)
+    if(DBIS->debug >= 3)
 	PerlIO_printf(DBILOGFP, "    ct_get_data(%d): buflen = %d\n",
 		column, buflen);
 
@@ -2950,7 +2938,7 @@ int      syb_ct_get_data(sth, imp_sth, column, bufrv, buflen)
     } else {
 	sv_setsv(bufsv, &PL_sv_undef);
     }
-    if(dbis->debug >= 3)
+    if(DBIS->debug >= 3)
 	PerlIO_printf(DBILOGFP, "    ct_get_data(%d): got %d bytes (ret = %d)\n",
 		column, outlen, ret);
 
@@ -2976,7 +2964,7 @@ int      syb_ct_finish_send(sth, imp_sth)
      
 
     retcode = ct_send(imp_sth->cmd);
-    if(dbis->debug >= 3)
+    if(DBIS->debug >= 3)
 	PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_send() = %d\n",
 		retcode);
     if(retcode != CS_SUCCEED) {
@@ -2984,7 +2972,7 @@ int      syb_ct_finish_send(sth, imp_sth)
     }
 
     while((retcode = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 3)
+	if(DBIS->debug >= 3)
 	    PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_results(%d) = %d\n",
 		    restype, retcode);
 	if(restype == CS_PARAM_RESULT) {
@@ -2993,7 +2981,7 @@ int      syb_ct_finish_send(sth, imp_sth)
 
 	    retcode = ct_describe(imp_sth->cmd, 1, &datafmt);
 	    if(retcode != CS_SUCCEED) {
-		if(dbis->debug >= 3)
+		if(DBIS->debug >= 3)
 		    PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_describe() failed\n");
 		return 0;
 	    }
@@ -3003,14 +2991,14 @@ int      syb_ct_finish_send(sth, imp_sth)
 				  (CS_VOID *)imp_dbh->iodesc.timestamp,
 				  &imp_dbh->iodesc.timestamplen,
 				  NULL)) != CS_SUCCEED) {
-		if(dbis->debug >= 3)
+		if(DBIS->debug >= 3)
 		    PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_bind() failed\n");
 		return 0;
 	    }
 	    retcode = ct_fetch(imp_sth->cmd, CS_UNUSED, CS_UNUSED, 
 			       CS_UNUSED, &count);
 	    if(retcode != CS_SUCCEED) {
-		if(dbis->debug >= 3)
+		if(DBIS->debug >= 3)
 		    PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_fetch() failed\n");
 		return 0;
 	    }
@@ -3018,7 +3006,7 @@ int      syb_ct_finish_send(sth, imp_sth)
 
 	    retcode = ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT);
 	    if(retcode != CS_SUCCEED) {
-		if(dbis->debug >= 3)
+		if(DBIS->debug >= 3)
 		    PerlIO_printf(DBILOGFP, "    ct_finish_send(): ct_fetch() failed\n");
 		return 0;
 	    }
@@ -3034,7 +3022,7 @@ int      syb_ct_send_data(sth, imp_sth, buffer, size)
     char *buffer;
     int size;
 {
-    if(dbis->debug >= 3)
+    if(DBIS->debug >= 3)
 	PerlIO_printf(DBILOGFP, "    ct_send_data(): sending buffer size %d bytes\n",
 		size);
     return ct_send_data(imp_sth->cmd, buffer, size) == CS_SUCCEED;
@@ -3063,7 +3051,7 @@ int      syb_ct_data_info(sth, imp_sth, action, column, attr)
 	    if(svp && SvIOK(*svp))
 		imp_dbh->iodesc.total_txtlen = SvIV(*svp);
 
-	    if(dbis->debug >= 3)
+	    if(DBIS->debug >= 3)
 		PerlIO_printf(DBILOGFP, "    ct_data_info(): set total_txtlen to %d\n",
 			imp_dbh->iodesc.total_txtlen);
 
@@ -3073,7 +3061,7 @@ int      syb_ct_data_info(sth, imp_sth, action, column, attr)
 		mg_get(*svp);
 	    if(svp && SvIOK(*svp))
 		imp_dbh->iodesc.log_on_update = SvIV(*svp);
-	    if(dbis->debug >= 3)
+	    if(DBIS->debug >= 3)
 		PerlIO_printf(DBILOGFP, "    ct_data_info(): set log_on_update to %d\n",
 			imp_dbh->iodesc.log_on_update);
 	}
@@ -3082,17 +3070,17 @@ int      syb_ct_data_info(sth, imp_sth, action, column, attr)
     if(action == CS_SET) {
 	column = CS_UNUSED;
     } else {
-	if(dbis->debug >= 3)
+	if(DBIS->debug >= 3)
 	    PerlIO_printf(DBILOGFP, "    ct_data_info(): get IODESC for column %d\n",
 		    column);
     }
 
     ret = ct_data_info(cmd, action, column, &imp_dbh->iodesc);
 
-    if(action == CS_GET && dbis->debug >= 3) {
+    if(action == CS_GET && DBIS->debug >= 3) {
 	PerlIO_printf(DBILOGFP, "    ct_data_info(): ret = %d, total_txtlen = %d\n",
 		ret, imp_dbh->iodesc.total_txtlen);
-    } else if(dbis->debug >= 3) {
+    } else if(DBIS->debug >= 3) {
 	PerlIO_printf(DBILOGFP, "    ct_data_info(): ret = %d\n",
 		ret);
     }
@@ -3277,7 +3265,7 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
     char *key = SvPV(keysv,kl);
     T_st_params *par;
 
-    if(dbis->debug >= 2) {
+    if(DBIS->debug >= 2) {
 	PerlIO_printf(DBILOGFP, "    syb_st_STORE(): key = %s\n", key);
     }
 
@@ -3289,7 +3277,7 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
     if (par->len <= 0)
 	return FALSE;
     
-    if(dbis->debug >= 2) {
+    if(DBIS->debug >= 2) {
 	PerlIO_printf(DBILOGFP, "    syb_st_STORE(): storing %d for key = %s\n", SvTRUE(valuesv), key);
     }
     switch(par - S_st_store_params)
@@ -3482,7 +3470,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     CS_INT datatype;
     int free_value = 0;
 
-    if (dbis->debug >= 2) {
+    if (DBIS->debug >= 2) {
         char *text = neatsvpv(phs->sv,0);
  	PerlIO_printf(DBILOGFP, "       bind %s (%s) <== %s (", 
 		      phs->name, phs->varname, text);
@@ -3612,15 +3600,25 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     phs->maxlen  = SvLEN(phs->sv)-1;    /* avail buffer space   */
     /* value_len has current value length */
 
-    if (dbis->debug >= 3) {
+    if (DBIS->debug >= 3) {
         PerlIO_printf(DBILOGFP, "       bind %s <== '%.100s' (size %d, ok %d)\n",
             phs->name, phs->sv_buf, (long)phs->maxlen, SvOK(phs->sv)?1:0);
     }
-    if (dbis->debug >= 3) {
+    if (DBIS->debug >= 3) {
         PerlIO_printf(DBILOGFP, "       datafmt: type=%d, status=%d, len=%d\n",
 		phs->datafmt.datatype, phs->datafmt.status, value_len);
         PerlIO_printf(DBILOGFP, "       saved type: %d\n", datatype);
     }
+
+#if 1
+    /* If this handle is still active call finish()... */
+    if(DBIc_ACTIVE(imp_sth) && imp_sth->exec_done) {
+	int finish = imp_dbh->flushFinish;
+	imp_dbh->flushFinish = 1;
+	syb_st_finish(sth, imp_sth);
+	imp_dbh->flushFinish = finish;
+    }
+#endif
 
     if(imp_sth->dyn_execed == 0) {
 	if(imp_sth->type == 0) {
@@ -3687,7 +3685,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 	croak("Can't bind ``lvalue'' mode scalar as inout parameter (currently)");
 #endif
 
-    if (dbis->debug >= 2)
+    if (DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "bind %s <== '%.200s' (attribs: %s)\n",
 		name, SvPV(newvalue,lna), attribs ? SvPV(attribs,lna) : "" );
 
@@ -3939,8 +3937,14 @@ static int map_syb_types(syb_type)
     case CS_INT_TYPE:		return 4;
     case CS_REAL_TYPE:		return 7; 
     case CS_FLOAT_TYPE:		return 6;
+#if defined(CS_DATE_TYPE)
+      case CS_DATE_TYPE:
+#endif
     case CS_DATETIME_TYPE:
-    case CS_DATETIME4_TYPE:	return 11;
+    case CS_DATETIME4_TYPE:	return 9;
+#if defined(CS_TIME_TYPE)
+      case CS_TIME_TYPE:        return 10;
+#endif
     case CS_MONEY_TYPE:
     case CS_MONEY4_TYPE:	return 3;
     case CS_NUMERIC_TYPE:	return 2;

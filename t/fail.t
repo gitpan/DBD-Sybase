@@ -1,9 +1,12 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.4 2001/07/03 15:52:27 mpeppler Exp $
+# $Id: fail.t,v 1.5 2003/09/08 21:30:22 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
+
+use lib 't';
+use _test;
 
 BEGIN {print "1..13\n";}
 END {print "not ok 1\n" unless $loaded;}
@@ -11,29 +14,9 @@ use DBI;
 $loaded = 1;
 print "ok 1\n";
 
-# Find the passwd file:
-@dirs = ('./.', './..', './../..', './../../..');
-foreach (@dirs)
-{
-    if(-f "$_/PWD")
-    {
-	open(PWD, "$_/PWD") || die "$_/PWD is not readable: $!\n";
-	while(<PWD>)
-	{
-	    chop;
-	    s/^\s*//;
-	    next if(/^\#/ || /^\s*$/);
-	    ($l, $r) = split(/=/);
-	    $Uid = $r if($l eq UID);
-	    $Pwd = $r if($l eq PWD);
-	    $Srv = $r if($l eq SRV);
-	}
-	close(PWD);
-	last;
-    }
-}
+($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError => 0});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;

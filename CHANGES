@@ -1,4 +1,21 @@
-$Id: CHANGES,v 1.41 2003/04/02 19:39:52 mpeppler Exp $
+$Id: CHANGES,v 1.44 2003/09/08 21:32:31 mpeppler Exp $
+
+Release 1.01
+
+	Automatically finish() statement handles if they are re-executed
+        before all the rows have been fetched.
+	Added support for new tables() syntax, thanks to Stephen Wilcoxon.
+	Added support for DATE and TIME datatypes (available in the 
+	ASE 12.5.1 release, currently undergoing beta testing).
+	Allow user to specify a database to use for the tests instead of 
+	using "tempdb" (useful if user does not have SA privileges).
+	
+	Bugs Fixed:
+
+	517 - getpwnam() isn't portable.
+	493 - Second execute on a prepared handle fails.
+	487 - Add connection information to error messages.
+	407 - Second+ statement does not use db from "use database".
 
 Release 1.00
 

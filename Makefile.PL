@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.21 2003/03/31 23:55:11 mpeppler Exp $
+# $Id: Makefile.PL,v 1.23 2003/09/08 21:30:22 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -63,7 +63,10 @@ sub configure {
     my $sybase_dir = $ENV{SYBASE};
 
     if(!$sybase_dir) {
-	$sybase_dir = (getpwnam('sybase'))[7];
+	# PR 517 - getpwnam() isn't portable.
+	eval q{
+	    $sybase_dir = (getpwnam('sybase'))[7];
+	};
     }
 
     open(IN, "CONFIG") || die "Can't open CONFIG: $!";
@@ -128,7 +131,7 @@ sub configure {
 	    
 	    foreach ( readdir(SYBLIB) ) {
 		next unless -f "$SYBASE/lib/$_";
-		next unless /^lib(\S+)\.(so|a)/;
+		next unless /^lib(\S+)\.(so|sl|a)/;
 		$libname{$1} = 1;
 	    }
 	
@@ -239,6 +242,8 @@ sub configPwd {
     $pwd{UID} = getAns() || $pwd{UID};
     print "Password (default: $pwd{PWD}): ";
     $pwd{PWD} = getAns() || $pwd{PWD};
+    print "Sybase database to use on $pwd{SRV} (default: $pwd{DB}): ";
+    $pwd{DB} = getAns() || $pwd{DB};
 
     open(OUT, ">PWD") || die "Can't open PWD: $!";
     print OUT <<EOF;

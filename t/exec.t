@@ -1,13 +1,16 @@
 #!/usr/local/bin/perl
 #
-# $Id: exec.t,v 1.3 2002/06/27 21:53:59 mpeppler Exp $
+# $Id: exec.t,v 1.4 2003/09/08 21:30:22 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
 
+use lib 't';
+use _test;
+
 #use strict;
 
-use vars qw($Pwd $Uid $Srv $loaded);
+use vars qw($Pwd $Uid $Srv $Db $loaded);
 
 BEGIN {print "1..9\n";}
 END {print "not ok 1\n" unless $loaded;}
@@ -17,29 +20,10 @@ print "ok 1\n";
 
 #DBI->trace(3);
 
-# Find the passwd file:
-@dirs = ('./.', './..', './../..', './../../..');
-foreach (@dirs)
-{
-    if(-f "$_/PWD")
-    {
-	open(PWD, "$_/PWD") || die "$_/PWD is not readable: $!\n";
-	while(<PWD>)
-	{
-	    chop;
-	    s/^\s*//;
-	    next if(/^\#/ || /^\s*$/);
-	    ($l, $r) = split(/=/);
-	    $Uid = $r if($l eq UID);
-	    $Pwd = $r if($l eq PWD);
-	    $Srv = $r if($l eq SRV);
-	}
-	close(PWD);
-	last;
-    }
-}
+($Uid, $Pwd, $Srv, $Db) = _test::get_info();
+
 #DBI->trace(3);
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError=>1});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError=>1});
 #exit;
 $dbh and print "ok 2\n"
     or print "not ok 2\n";
@@ -59,7 +43,7 @@ do {
     }
 } while($sth->{syb_more_results});
 
-$dbh->do("use tempdb");
+#$dbh->do("use tempdb");
 $dbh->do("set arithabort off");
 #$dbh->do("drop proc dbitest");
 $dbh->do(qq{

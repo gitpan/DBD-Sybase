@@ -1,11 +1,14 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.7 2002/01/23 00:10:49 mpeppler Exp $
+# $Id: main.t,v 1.8 2003/09/08 21:30:22 mpeppler Exp $
 
 # Base DBD Driver Test
 
 use lib 'blib/lib';
 use lib 'blib/arch';
+
+use lib 't';
+use _test;
 
 BEGIN {print "1..16\n";}
 END {print "not ok 1\n" unless $loaded;}
@@ -13,27 +16,7 @@ use DBI;
 $loaded = 1;
 print "ok 1\n";
 
-# Find the passwd file:
-@dirs = ('./.', './..', './../..', './../../..');
-foreach (@dirs)
-{
-    if(-f "$_/PWD")
-    {
-	open(PWD, "$_/PWD") || die "$_/PWD is not readable: $!\n";
-	while(<PWD>)
-	{
-	    chop;
-	    s/^\s*//;
-	    next if(/^\#/ || /^\s*$/);
-	    ($l, $r) = split(/=/);
-	    $Uid = $r if($l eq UID);
-	    $Pwd = $r if($l eq PWD);
-	    $Srv = $r if($l eq SRV);
-	}
-	close(PWD);
-	last;
-    }
-}
+($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
 my($switch) = DBI->internal;
 #DBI->trace(2); # 2=detailed handle trace
@@ -42,7 +25,7 @@ print "Switch: $switch->{'Attribution'}, $switch->{'Version'}\n";
 
 print "Available Drivers: ",join(", ",DBI->available_drivers()),"\n";
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError => 0});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;

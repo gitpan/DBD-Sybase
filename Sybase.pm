@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.44 2003/04/03 19:15:13 mpeppler Exp $
+# $Id: Sybase.pm,v 1.46 2003/09/08 21:30:22 mpeppler Exp $
 
 # Copyright (c) 1996-2003   Michael Peppler
 #
@@ -24,8 +24,8 @@
 
 
     $hostname = Sys::Hostname::hostname();
-    $VERSION = '1.00';
-    my $Revision = substr(q$Revision: 1.44 $, 10);
+    $VERSION = '1.01';
+    my $Revision = substr(q$Revision: 1.46 $, 10);
 
     require_version DBI 1.02;
 
@@ -129,8 +129,25 @@
 
     sub tables {
 	my $dbh = shift;
+ 	my $catalog = shift;
+ 	my $schema = shift || '%';
+ 	my $table = shift || '%';
+ 	my $type = shift || '%';
+ 	$type =~ s/[\'\"\s]//g; # strip quotes and spaces
+ 	if ($type =~ /,/) { # multiple types
+	    $type = '[' . join('', map { substr($_,0,1) } split /,/, $type) . ']';
+ 	} else {
+ 		$type = substr($type,0,1);
+ 	}
+ 	$type =~ s/T/U/;
+  
+ 	my $sth;
+ 	if ($catalog and $catalog ne '%') {
+	    $sth = $dbh->prepare("select o.name from $catalog..sysobjects o, $catalog..sysusers u where o.type like '$type' and o.name like '$table' and o.uid = u.uid and u.name like '$schema'");
+ 	} else {
+	    $sth = $dbh->prepare("select o.name from sysobjects o, sysusers u where o.type like '$type' and o.name like '$table' and o.uid = u.uid and u.name like '$schema'");
+ 	}
 
-	my $sth = $dbh->prepare("select name from sysobjects where type in ('V', 'U')");
 	$sth->execute;
 	my @names;
 	my $dat;
@@ -150,7 +167,6 @@
 	my $sth = $dbh->prepare($statement, $attr) or return undef;
 	$sth->execute(@params) or return undef;
 	return undef if $sth->err;
-	my $rows = $sth->rows;
 	if(defined($sth->{syb_more_results})) {
 	    do {
 		while(my $dat = $sth->fetch) {
@@ -159,6 +175,7 @@
 		}
 	    } while($sth->{syb_more_results});
 	}
+	my $rows = $sth->rows;
 
 	($rows == 0) ? "0E0" : $rows;
     }
@@ -269,36 +286,38 @@
 # Calling sp_datatype_info returns the appropriate data for the server that
 # we are currently connected to.
 # In general the data is static, so it's not really necessary, but ASE 12.5
-# introduces some changes, in particular char/varchar max lenghts of 2048...
-#	my $sth = $dbh->prepare("sp_datatype_info");
+# introduces some changes, in particular char/varchar max lenghts that depend
+# on the server's page size. 12.5.1 introduces the DATE and TIME datatypes.
+	my $sth = $dbh->prepare("sp_datatype_info");
 	my $data;
-#	if($sth->execute) {
-#	    $data = $sth->fetchall_arrayref;
+	if($sth->execute) {
+	    $data = $sth->fetchall_arrayref;
+	}
 #	} else {
-	    $data = [
-       ['bit',-7,1,undef,undef,undef,'0','0',2,undef,'0',undef,'bit',undef,undef,undef,undef,undef,undef],
-       ['tinyint',-6,3,undef,undef,undef,1,'0',2,1,'0','0','tinyint',undef,undef,undef,undef,undef,undef],
-       ['image',-4,'2147483647','0x',undef,undef,1,'0',1,undef,'0',undef,'image',undef,undef,undef,undef,undef,undef],
-       ['timestamp',-3,8,'0x',undef,undef,1,'0',2,undef,'0',undef,'timestamp',undef,undef,undef,undef,undef,undef],
-       ['varbinary',-3,255,'0x',undef,'maxlength',1,'0',2,undef,'0',undef,'varbinary',undef,undef,undef,undef,undef,undef],
-       ['binary',-2,255,'0x',undef,'length',1,'0',2,undef,'0',undef,'binary',undef,undef,undef,undef,undef,undef],
-       ['text',-1,'2147483647','\'','\'',undef,1,1,1,undef,'0',undef,'text',undef,undef,undef,undef,undef,undef],
-       ['char',1,255,'\'','\'','length',1,1,3,undef,'0',undef,'char',undef,undef,undef,undef,undef,undef],
-       ['nchar',1,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nchar',undef,undef,undef,undef,undef,undef],
-       ['numeric',2,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','numeric','0',38,undef,undef,undef,undef],
-       ['decimal',3,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','decimal','0',38,undef,undef,undef,undef],
-       ['money',3,19,'\$',undef,undef,1,'0',2,'0',1,'0','money',undef,undef,undef,undef,undef,undef],
-       ['smallmoney',3,10,'\$',undef,undef,1,'0',2,'0',1,'0','smallmoney',undef,undef,undef,undef,undef,undef],
-       ['int',4,10,undef,undef,undef,1,'0',2,'0','0','0','int',undef,undef,undef,undef,undef,undef],
-       ['smallint',5,5,undef,undef,undef,1,'0',2,'0','0','0','smallint',undef,undef,undef,undef,undef,undef],
-       ['float',6,15,undef,undef,undef,1,'0',2,'0','0','0','float',undef,undef,undef,undef,10,undef],
-       ['real',7,7,undef,undef,undef,1,'0',2,'0','0','0','real',undef,undef,undef,undef,10,undef],
-       ['datetime',11,23,'\'','\'',undef,1,'0',3,undef,'0',undef,'datetime',undef,undef,93,undef,undef,undef],
-       ['smalldatetime',11,16,'\'','\'',undef,1,'0',3,undef,'0',undef,'smalldatetime',undef,undef,93,undef,undef,undef],
-       ['nvarchar',12,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nvarchar',undef,undef,undef,undef,undef,undef],
-       ['sysname',12,30,'\'','\'','maxlength',1,1,3,undef,'0',undef,'sysname',undef,undef,undef,undef,undef,undef],
-       ['varchar',12,255,'\'','\'','maxlength',1,1,3,undef,'0',undef,'varchar',undef,undef,undef,undef,undef,undef]
-		    ];
+#	    $data = [
+#       ['bit',-7,1,undef,undef,undef,'0','0',2,undef,'0',undef,'bit',undef,undef,undef,undef,undef,undef],
+#       ['tinyint',-6,3,undef,undef,undef,1,'0',2,1,'0','0','tinyint',undef,undef,undef,undef,undef,undef],
+#       ['image',-4,'2147483647','0x',undef,undef,1,'0',1,undef,'0',undef,'image',undef,undef,undef,undef,undef,undef],
+#       ['timestamp',-3,8,'0x',undef,undef,1,'0',2,undef,'0',undef,'timestamp',undef,undef,undef,undef,undef,undef],
+#       ['varbinary',-3,255,'0x',undef,'maxlength',1,'0',2,undef,'0',undef,'varbinary',undef,undef,undef,undef,undef,undef],
+#       ['binary',-2,255,'0x',undef,'length',1,'0',2,undef,'0',undef,'binary',undef,undef,undef,undef,undef,undef],
+#       ['text',-1,'2147483647','\'','\'',undef,1,1,1,undef,'0',undef,'text',undef,undef,undef,undef,undef,undef],
+#       ['char',1,255,'\'','\'','length',1,1,3,undef,'0',undef,'char',undef,undef,undef,undef,undef,undef],
+#       ['nchar',1,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nchar',undef,undef,undef,undef,undef,undef],
+#       ['numeric',2,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','numeric','0',38,undef,undef,undef,undef],
+#       ['decimal',3,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','decimal','0',38,undef,undef,undef,undef],
+#       ['money',3,19,'\$',undef,undef,1,'0',2,'0',1,'0','money',undef,undef,undef,undef,undef,undef],
+#       ['smallmoney',3,10,'\$',undef,undef,1,'0',2,'0',1,'0','smallmoney',undef,undef,undef,undef,undef,undef],
+#       ['int',4,10,undef,undef,undef,1,'0',2,'0','0','0','int',undef,undef,undef,undef,undef,undef],
+#       ['smallint',5,5,undef,undef,undef,1,'0',2,'0','0','0','smallint',undef,undef,undef,undef,undef,undef],
+#       ['float',6,15,undef,undef,undef,1,'0',2,'0','0','0','float',undef,undef,undef,undef,10,undef],
+#       ['real',7,7,undef,undef,undef,1,'0',2,'0','0','0','real',undef,undef,undef,undef,10,undef],
+#       ['datetime',11,23,'\'','\'',undef,1,'0',3,undef,'0',undef,'datetime',undef,undef,93,undef,undef,undef],
+#       ['smalldatetime',11,16,'\'','\'',undef,1,'0',3,undef,'0',undef,'smalldatetime',undef,undef,93,undef,undef,undef],
+#       ['nvarchar',12,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nvarchar',undef,undef,undef,undef,undef,undef],
+#       ['sysname',12,30,'\'','\'','maxlength',1,1,3,undef,'0',undef,'sysname',undef,undef,undef,undef,undef,undef],
+#       ['varchar',12,255,'\'','\'','maxlength',1,1,3,undef,'0',undef,'varchar',undef,undef,undef,undef,undef,undef]
+#		    ];
 #	}
 	my $ti = 
 	[     {   TYPE_NAME         => 0,
@@ -322,9 +341,6 @@
 		  interval_precision => 18,
 	      },
 	];
-#	foreach (@$data) {
-#	    push(@$ti, $_);
-#	}
 	push(@$ti, @$data);
 
 	return $ti;
