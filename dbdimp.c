@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.46 2003/12/24 19:15:35 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.57 2004/06/11 11:52:00 mpeppler Exp $
 
-   Copyright (c) 1997-2003  Michael Peppler
+   Copyright (c) 1997-2004  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -59,7 +59,7 @@ static CS_RETCODE describe _((imp_sth_t *, int));
 static CS_RETCODE fetch_data _((imp_dbh_t *, CS_COMMAND*));
 static CS_RETCODE CS_PUBLIC clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
 static CS_RETCODE CS_PUBLIC servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
-static CS_COMMAND *syb_alloc_cmd _((CS_CONNECTION*));
+static CS_COMMAND *syb_alloc_cmd _((imp_dbh_t *, CS_CONNECTION*));
 static void dealloc_dynamic _((imp_sth_t *));
 static int map_syb_types _((int));
 static int map_sql_types _((int));
@@ -68,6 +68,11 @@ static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
 static int syb_st_describe_proc _((imp_sth_t *, char *));
 static void syb_set_error(imp_dbh_t *, int, char *);
 static char *my_strdup _((char *));
+static void fetchKerbTicket(imp_dbh_t *imp_dbh);
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+static perl_mutex context_alloc_mutex[1];
+#endif
 
 
 static CS_CONTEXT *context;
@@ -98,7 +103,12 @@ CS_CLIENTMSG	*errmsg;
     imp_dbh_t *imp_dbh = NULL;
     char buff[255];
 
-/*    fprintf(stderr, "OC: %s\n", errmsg->msgstring); */
+    if(DBIS->debug >= 3) {
+	PerlIO_printf(DBILOGFP, "    clientmsg_cb -> %s\n", errmsg->msgstring);
+	if (errmsg->osstringlen > 0) {
+	    PerlIO_printf(DBILOGFP, "    clientmsg_cb -> %s\n", errmsg->osstring);
+	}
+    }
 
     if(connection) {
 	if((ct_con_props(connection, CS_GET, CS_USERDATA,
@@ -123,13 +133,13 @@ CS_CLIENTMSG	*errmsg;
 	    XPUSHs(sv_2mortal(newSViv(CS_SEVERITY(errmsg->msgnumber))));
 	    XPUSHs(sv_2mortal(newSViv(0)));
 	    XPUSHs(sv_2mortal(newSViv(0)));
-	    XPUSHs(&sv_undef);
-	    XPUSHs(&sv_undef);
+	    XPUSHs(&PL_sv_undef);
+	    XPUSHs(&PL_sv_undef);
 	    XPUSHs(sv_2mortal(newSVpv(errmsg->msgstring, 0)));
 	    if(imp_dbh->sql)
 		XPUSHs(sv_2mortal(newSVpv(imp_dbh->sql, 0)));
 	    else
-		XPUSHs(&sv_undef);
+		XPUSHs(&PL_sv_undef);
 
 	    XPUSHs(sv_2mortal(newSVpv("client", 0)));
 	    
@@ -228,6 +238,23 @@ CS_SERVERMSG	*srvmsg;
     imp_dbh_t *imp_dbh = NULL;
     char buff[1024];
 
+    if(DBIS->debug >= 3) {
+	if(srvmsg->msgnumber) {
+	    PerlIO_printf(DBILOGFP, "    servermsg_cb -> number=%ld severity=%ld ",
+		    srvmsg->msgnumber, srvmsg->severity);
+	    PerlIO_printf(DBILOGFP, "state=%ld line=%ld ",
+		    srvmsg->state, srvmsg->line);
+	    if (srvmsg->svrnlen > 0) {
+		PerlIO_printf(DBILOGFP, "server=%s ", srvmsg->svrname);
+	    }
+	    if (srvmsg->proclen > 0) {
+		PerlIO_printf(DBILOGFP, "procedure=%s ", srvmsg->proc);
+	    }
+	    PerlIO_printf(DBILOGFP, "text=%s\n", srvmsg->text);
+	} else {
+	    warn("   servermsg_cb -> %s\n", srvmsg->text);
+	}
+    }
 
     /* add check on connection not being NULL (PR/477)
        just to be on the safe side - freetds can call the server
@@ -293,17 +320,17 @@ CS_SERVERMSG	*srvmsg;
 	if(srvmsg->svrnlen > 0)
 	    XPUSHs(sv_2mortal(newSVpv(srvmsg->svrname, 0)));
 	else
-	    XPUSHs(&sv_undef);
+	    XPUSHs(&PL_sv_undef);
 	if(srvmsg->proclen > 0)
 	    XPUSHs(sv_2mortal(newSVpv(srvmsg->proc, 0)));
 	else
-	    XPUSHs(&sv_undef);
+	    XPUSHs(&PL_sv_undef);
 	XPUSHs(sv_2mortal(newSVpv(srvmsg->text, 0)));
 	
 	if(imp_dbh->sql)
 	    XPUSHs(sv_2mortal(newSVpv(imp_dbh->sql, 0)));
 	else 
-	    XPUSHs(&sv_undef);
+	    XPUSHs(&PL_sv_undef);
 	    
 	XPUSHs(sv_2mortal(newSVpv("server", 0)));
 
@@ -583,6 +610,10 @@ void syb_init(dbistate)
 
     DBIS = dbistate;
 
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+    MUTEX_INIT (context_alloc_mutex);
+#endif
+
 #if defined(CS_VERSION_125)
     cs_ver = CS_VERSION_125;
     retcode = cs_ctx_alloc(cs_ver, &context);
@@ -684,6 +715,18 @@ void syb_init(dbistate)
     }
 }
 
+int 
+syb_thread_enabled()
+{
+    int retcode = 0;
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT) && !defined(NO_THREADS)
+    retcode = 1;
+#endif
+
+    return retcode;
+}
+
 int
 syb_set_timeout(timeout)
     int		timeout;
@@ -693,10 +736,19 @@ syb_set_timeout(timeout)
 	timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
 				   default no limit */
     if(DBIS->debug >= 2)
-	PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
+	PerlIO_printf(DBILOGFP, "    syb_set_timeout() -> ct_config(CS_TIMEOUT,%d)\n", timeout);
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+    MUTEX_LOCK (context_alloc_mutex);
+#endif
+    
     if((retcode = ct_config(context, CS_SET, CS_TIMEOUT, &timeout,
 			    CS_UNUSED, NULL)) != CS_SUCCEED)
 	warn("ct_config(CS_SET, CS_TIMEOUT) failed");
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+    MUTEX_UNLOCK (context_alloc_mutex);
+#endif
 
     return retcode;
 }
@@ -761,6 +813,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     SV         *attribs;
 {
     dTHR;
+    int retval;
 
     imp_dbh->server[0]     = 0;
     imp_dbh->charset[0]    = 0;
@@ -787,11 +840,16 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     imp_dbh->deadlockRetry = 0;
     imp_dbh->deadlockSleep = 0;
     imp_dbh->deadlockVerbose = 0;
+    imp_dbh->nsqlNoStatus  = 0;
     imp_dbh->noChildCon    = 0;
     imp_dbh->failedDbUseFatal    = fetchAttrib(attribs, "syb_failed_db_fatal");
     imp_dbh->bindEmptyStringNull = fetchAttrib(attribs, "syb_bind_empty_string_as_null");
     imp_dbh->err_handler         = fetchSvAttrib(attribs, "syb_err_handler");
     imp_dbh->alwaysForceFailure  = 1;
+    imp_dbh->kerberosPrincipal[0] = 0;
+    imp_dbh->kerbGetTicket       = fetchSvAttrib(attribs, "syb_kerberos_serverprincipal");
+    imp_dbh->host[0]             = 0;
+    imp_dbh->port[0]             = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -806,6 +864,11 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
 	extractFromDsn("hostname=", dsn, imp_dbh->hostname, 255);
 	extractFromDsn("tdsLevel=", dsn, imp_dbh->tdsLevel, 30);
 	extractFromDsn("encryptPassword=", dsn, imp_dbh->encryptPassword, 10);
+	extractFromDsn("kerberos=", dsn, imp_dbh->kerberosPrincipal, 32);
+	extractFromDsn("host=", dsn, imp_dbh->host, 64);
+	extractFromDsn("port=", dsn, imp_dbh->port, 20);
+	extractFromDsn("maxConnect=", dsn, imp_dbh->maxConnect, 25);
+	extractFromDsn("sslCAFile=", dsn, imp_dbh->sslCAFile, 255);
     } else {
 	strncpy(imp_dbh->server, dsn, 64);
 	imp_dbh->server[63] = 0;
@@ -818,8 +881,25 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
+    if(imp_dbh->kerbGetTicket) {
+	fetchKerbTicket(imp_dbh);
+    }
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+    MUTEX_LOCK(context_alloc_mutex);
+#endif
+
     if((imp_dbh->connection = syb_db_connect(imp_dbh)) == NULL)
-	return 0;
+	retval = 0;
+    else
+	retval = 1;
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+    MUTEX_UNLOCK(context_alloc_mutex);
+#endif
+
+    if(!retval)
+	return retval;
 
     DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
     DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
@@ -840,6 +920,22 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     char ofile[255];
     int len;
 
+    /* Allow increase of the max number of connections - patch supplied by
+       Ed Avis */
+    if (imp_dbh->maxConnect[0]) {
+        /* Maximum number of connections. */
+	const char *const s = imp_dbh->maxConnect;
+        int i;
+
+        i = atoi(s);
+	if (i < 1) {
+	    warn("maxConnect must be positive, not '%s'", s);
+            return 0;
+	}
+        if((retcode = ct_config(context, CS_SET, CS_MAX_CONNECT, (CS_VOID*)&i,
+				CS_UNUSED, NULL)) != CS_SUCCEED)
+	    croak("ct_config(max_connect) failed");
+    }
     if(imp_dbh->ifile[0]) {
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_config(CS_IFILE,%s)\n",
@@ -981,23 +1077,51 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	}
     }
 
-    if(retcode == CS_SUCCEED && *imp_dbh->uid) {
-	if((retcode = ct_con_props(connection, CS_SET, CS_USERNAME, 
-				   imp_dbh->uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
+#if defined(CS_SEC_NETWORKAUTH)
+    if(imp_dbh->kerberosPrincipal[0] == 0) {
+#endif
+	if(retcode == CS_SUCCEED && *imp_dbh->uid) {
+	    if((retcode = ct_con_props(connection, CS_SET, CS_USERNAME, 
+				       imp_dbh->uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
+	    {
+		warn("ct_con_props(CS_USERNAME) failed");
+		return 0;
+	    }
+	}
+	if(retcode == CS_SUCCEED && *imp_dbh->pwd) {
+	    if((retcode = ct_con_props(connection, CS_SET, CS_PASSWORD, 
+				       imp_dbh->pwd, CS_NULLTERM, NULL)) != CS_SUCCEED)
+	    {
+		warn("ct_con_props(CS_PASSWORD) failed");
+		return 0;
+	    }
+	}
+#if defined(CS_SEC_NETWORKAUTH)
+    } else {
+	/*
+	** If we're using Kerberos, set the appropriate connection properties
+	** (which requires the Sybase Kerberos principal name).  
+	*/
+	CS_INT i = CS_TRUE;
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> ct_con_props(CS_SERVERPRINCIPAL,%s)\n",
+		    imp_dbh->kerberosPrincipal);
+	/*warn( imp_dbh->kerberosPrincipal);*/
+	if ((retcode = ct_con_props(connection, CS_SET, CS_SEC_NETWORKAUTH,
+				    (CS_VOID *) &i, CS_UNUSED, NULL)) != CS_SUCCEED) 
 	{
-	    warn("ct_con_props(CS_USERNAME) failed");
+	    warn("ct_con_props(CS_SEC_NETWORKAUTH) failed");
 	    return 0;
 	}
-	
-    }
-    if(retcode == CS_SUCCEED && *imp_dbh->pwd) {
-	if((retcode = ct_con_props(connection, CS_SET, CS_PASSWORD, 
-				   imp_dbh->pwd, CS_NULLTERM, NULL)) != CS_SUCCEED)
+        
+	if ((retcode = ct_con_props(connection, CS_SET, CS_SEC_SERVERPRINCIPAL, 
+				    imp_dbh->kerberosPrincipal, CS_NULLTERM, NULL)) != CS_SUCCEED) 
 	{
-	    warn("ct_con_props(CS_PASSWORD) failed");
+	    warn("ct_con_props(CS_SEC_SERVERPRINCIPAL) failed");
 	    return 0;
 	}
     }
+#endif
     if(retcode == CS_SUCCEED)
     {
 	if((retcode = ct_con_props(connection, CS_SET, CS_APPNAME, 
@@ -1027,6 +1151,34 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 		return 0;
 	    }
 	}
+    }
+    if(retcode == CS_SUCCEED)
+    {
+	if(imp_dbh->sslCAFile[0] != 0) {
+	    if((retcode = ct_con_props(connection, CS_SET, CS_PROP_SSL_CA, 
+				       imp_dbh->sslCAFile,
+				       CS_NULLTERM, (CS_INT*)NULL)) != CS_SUCCEED)
+	    {
+	      warn("ct_con_props(CS_PROP_SSL_CA, %s) failed", imp_dbh->sslCAFile);
+		return 0;
+	    }
+	}
+    }
+    
+    if (imp_dbh->host[0] && imp_dbh->port[0]) {
+#if defined(CS_SERVERADDR)
+	char buff[255];
+	sprintf(buff, "%.64s %.20s", imp_dbh->host, imp_dbh->port);
+	if((retcode = ct_con_props(connection, CS_SET, CS_SERVERADDR, 
+				   (CS_VOID*)buff,
+				   CS_NULLTERM, (CS_INT*)NULL)) != CS_SUCCEED)
+	{
+	    warn("ct_con_props(CS_SERVERADDR) failed");
+	    return 0;
+	}
+#else
+	croak("This version of OpenClient doesn't support CS_SERVERADDR");
+#endif
     }
     if (retcode == CS_SUCCEED)
     {
@@ -1105,7 +1257,7 @@ syb_db_use(imp_dbh, connection)
     imp_dbh_t *imp_dbh;
     CS_CONNECTION *connection;
 {
-    CS_COMMAND *cmd = syb_alloc_cmd(connection);
+    CS_COMMAND *cmd = syb_alloc_cmd(imp_dbh, connection);
     CS_RETCODE ret;
     CS_INT     restype;
     char       statement[255];
@@ -1135,6 +1287,9 @@ syb_db_use(imp_dbh, connection)
 	return -1;
     }
     while((ret = ct_results(cmd, &restype)) == CS_SUCCEED) {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    syb_db_use() -> ct_results(%d)\n", 
+			  restype);
 	if(restype == CS_CMD_FAIL) {
 	    warn("DBD::Sybase - can't change context to database %s\n",
 		 imp_dbh->database);
@@ -1210,7 +1365,7 @@ int      syb_db_commit(dbh, imp_dbh)
 	return 1;
     }
 
-    cmd = syb_alloc_cmd(imp_dbh->connection);
+    cmd = syb_alloc_cmd(imp_dbh, imp_dbh->connection);
     if(imp_dbh->doRealTran)
 	sprintf(buff, "\nCOMMIT TRAN %s\n", imp_dbh->tranName);
     else
@@ -1260,7 +1415,7 @@ int      syb_db_rollback(dbh, imp_dbh)
 	return 1;
     }
 
-    cmd = syb_alloc_cmd(imp_dbh->connection);
+    cmd = syb_alloc_cmd(imp_dbh, imp_dbh->connection);
     if(imp_dbh->doRealTran)
 	sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
     else
@@ -1305,7 +1460,7 @@ static int syb_db_opentran(dbh, imp_dbh)
     if(DBIc_is(imp_dbh, DBIcf_AutoCommit) || imp_dbh->inTransaction)
 	return 1;
 
-    cmd = syb_alloc_cmd(imp_dbh->connection);
+    cmd = syb_alloc_cmd(imp_dbh, imp_dbh->connection);
     sprintf(imp_dbh->tranName, "DBI%x", imp_dbh);
     sprintf(buff, "\nBEGIN TRAN %s\n", imp_dbh->tranName);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -1511,7 +1666,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
     if (kl == 15 && strEQ(key, "syb_err_handler")) {
-	if(valuesv == &sv_undef) {
+	if(valuesv == &PL_sv_undef) {
 	    imp_dbh->err_handler = NULL;
 	} else if(imp_dbh->err_handler == (SV*)NULL) {
 	    imp_dbh->err_handler = newSVsv(valuesv);
@@ -1521,7 +1676,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
     if (kl == 16 && strEQ(key, "syb_row_callback")) {
-	if(valuesv == &sv_undef) {
+	if(valuesv == &PL_sv_undef) {
 	    imp_dbh->row_cb = NULL;
 	} else if(imp_dbh->row_cb == (SV*)NULL) {
 	    imp_dbh->row_cb = newSVsv(valuesv);
@@ -1605,6 +1760,13 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
 
+    if (kl == 17 && strEQ(key, "syb_nsql_nostatus")) {
+	int value = SvIV(valuesv);
+	imp_dbh->nsqlNoStatus = value;
+
+	return TRUE;
+    }
+
     if (kl == 16 && strEQ(key, "syb_no_child_con")) {
 	imp_dbh->noChildCon = SvIV(valuesv);
 
@@ -1682,14 +1844,14 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	if(imp_dbh->err_handler) {
 	    retsv = newSVsv(imp_dbh->err_handler);
 	} else {
-	    retsv = &sv_undef;
+	    retsv = &PL_sv_undef;
 	}
     }
     if (kl == 16 && strEQ(key, "syb_row_callback")) {
 	if(imp_dbh->row_cb) {
 	    retsv = newSVsv(imp_dbh->row_cb);
 	} else {
-	    retsv = &sv_undef;
+	    retsv = &PL_sv_undef;
 	}
     }
     if (kl == 15 && strEQ(key, "syb_chained_txn")) {
@@ -1760,6 +1922,9 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     if (kl == 20 && strEQ(key, "syb_deadlock_verbose")) {
 	retsv = newSViv(imp_dbh->deadlockVerbose);
     }
+    if (kl == 17 && strEQ(key, "syb_nsql_nostatus")) {
+	retsv = newSViv(imp_dbh->nsqlNoStatus);
+    }
 
     if (kl == 16 && strEQ(key, "syb_no_child_con")) {
 	retsv = newSViv(imp_dbh->noChildCon);
@@ -1777,23 +1942,27 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	retsv = newSVpv(imp_dbh->serverVersion, 0);
     }
 
-    if (retsv == &sv_yes || retsv == &sv_no || retsv == &sv_undef)
+    if (retsv == &sv_yes || retsv == &sv_no || retsv == &PL_sv_undef)
 	return retsv;
 
     return sv_2mortal(retsv);
 }
 
 static CS_COMMAND *
-syb_alloc_cmd(connection) 
+syb_alloc_cmd(imp_dbh, connection) 
+    imp_dbh_t *imp_dbh;
     CS_CONNECTION *connection;
 {
     CS_COMMAND *cmd;
     CS_RETCODE retcode;
 
     if((retcode = ct_cmd_alloc(connection, &cmd)) != CS_SUCCEED) {
-	warn("ct_cmd_alloc failed");
+	syb_set_error(imp_dbh, -1, "ct_cmd_alloc failed");
 	return NULL;
     }
+    if(DBIS->debug >= 3)
+	PerlIO_printf(DBILOGFP, "    syb_alloc_cmd() -> CS_COMMAND %x for CS_CONNECTION %x\n", cmd, connection);
+
     return cmd;
 }
 
@@ -1896,7 +2065,7 @@ dbd_preparse(imp_sth, statement)
 	namelen = (dest-start);
 	if (imp_sth->all_params_hv == NULL)
 	    imp_sth->all_params_hv = newHV();
-	phs_tpl.sv = &sv_undef;
+	phs_tpl.sv = &PL_sv_undef;
 	phs_sv = newSVpv((char*)&phs_tpl, sizeof(phs_tpl)+namelen+1);
 	hv_store(imp_sth->all_params_hv, start, namelen, phs_sv, 0);
 	strcpy( ((phs_t*)(void*)SvPVX(phs_sv))->name, start);
@@ -1953,6 +2122,8 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     }
 
     if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
+	int retval = 1;
+
 	if(imp_dbh->noChildCon) { /* inhibit child connections to be created */
 	    /*warn("Can't create child connections when syb_no_chld_con is set");*/
 	    syb_set_error(imp_dbh, -1, "DBD::Sybase error: Can't create child connections when syb_no_chld_con is set");
@@ -1962,15 +2133,21 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    croak("Panic: Can't have multiple statement handles on a single database handle when AutoCommit is OFF");
 	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_prepare() parent has active kids - opening new connection\n");
-	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL) {
-	    return 0;
-	}
-    }
 
-/*    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
-	if(syb_db_opentran(NULL, imp_dbh) == 0)
-	return 0; 
-*/
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+	MUTEX_LOCK(context_alloc_mutex);
+#endif
+	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL)
+	    retval = 0;
+
+#if PERL_VERSION >= 8 && defined(_REENTRANT)
+	MUTEX_UNLOCK(context_alloc_mutex);
+#endif
+
+	if(!retval)
+	    return retval;
+    }
 
 
     if(imp_dbh->sql != NULL)
@@ -2009,7 +2186,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    
 	    imp_sth->dyn_execed = 0;
 	    
-	    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+	    imp_sth->cmd = syb_alloc_cmd(imp_dbh, imp_sth->connection ? 
 					 imp_sth->connection :
 					 imp_dbh->connection);
 	    
@@ -2092,7 +2269,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 		PerlIO_printf(DBILOGFP, "    describe_proc: procname = %s\n", 
 			imp_sth->proc);
 
-	    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+	    imp_sth->cmd = syb_alloc_cmd(imp_dbh, imp_sth->connection ? 
 					 imp_sth->connection :
 					 imp_dbh->connection);
 	    ret = CS_SUCCEED;
@@ -2153,7 +2330,8 @@ cleanUp(imp_sth)
     int numCols = DBIc_NUM_FIELDS(imp_sth);
     for(i = 0; i < numCols; ++i)
 	if(imp_sth->coldata[i].type == CS_CHAR_TYPE ||
-	   imp_sth->coldata[i].type == CS_TEXT_TYPE)
+	   imp_sth->coldata[i].type == CS_TEXT_TYPE ||
+	   imp_sth->coldata[i].type == CS_IMAGE_TYPE)
 	    Safefree(imp_sth->coldata[i].value.c);
     
     if(imp_sth->datafmt)
@@ -2507,7 +2685,7 @@ syb_st_execute(sth, imp_sth)
 	if(!imp_sth->cmd) {
 	    /* only allocate a CS_COMMAND struct if there isn't one already
 	       bug# 461 */
-	    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+	    imp_sth->cmd = syb_alloc_cmd(imp_dbh, imp_sth->connection ? 
 					 imp_sth->connection :
 					 imp_dbh->connection);
 	}
@@ -2590,6 +2768,7 @@ syb_st_fetch(sth, imp_sth)
     CS_RETCODE retcode;
     CS_INT rows_read, restype;
     int len;
+    int clear_cache = 0;
 
     /* Check that execute() was executed sucessfully. This also implies	*/
     /* that describe() executed sucessfuly so the memory buffers	*/
@@ -2607,6 +2786,7 @@ syb_st_fetch(sth, imp_sth)
        of DBI!!! */
     if(num_fields < imp_sth->numCols) {
 	int isReadonly = SvREADONLY(av);
+	++clear_cache;
 	if(isReadonly)
 	    SvREADONLY_off(av);		/* DBI sets this readonly  */
 	i = imp_sth->numCols - 1;
@@ -2623,6 +2803,23 @@ syb_st_fetch(sth, imp_sth)
 	num_fields = AvFILL(av)+1;
 	if(isReadonly)
 	    SvREADONLY_on(av);		/* protect against shift @$row etc */
+	++clear_cache;
+    }
+
+    /* Clear cached statement handle attributes, if necessary */
+    if(clear_cache) {
+	SV *value;
+	char *key;
+	I32 keylen;
+        while ( (value = hv_iternextsv((HV*)SvRV(sth), &key, &keylen)) ) {
+            if (strncmp(key, "NAME_", 5) == 0 ||
+		strncmp(key, "TYPE", 4) == 0 ||
+		strncmp(key, "PRECISION", 9) == 0 ||
+		strncmp(key, "SCALE", 5) == 0 ||
+		strncmp(key, "NULLABLE", 8) == 0               ) {
+                hv_delete((HV*)SvRV(sth), key, keylen, G_DISCARD);
+            }
+        }
     }
 
     ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
@@ -2642,6 +2839,12 @@ syb_st_fetch(sth, imp_sth)
 	    SV *sv = AvARRAY(av)[i]; /* Note: we (re)use the SV in the AV   */
 	    len = 0;
 
+	    if(DBIS->debug >= 4) {
+		/*char *text = neatsvpv(phs->sv,0);*/
+		PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> %d/%d/%d\n",
+			      i, imp_sth->coldata[i].valuelen, 
+			      imp_sth->coldata[i].type);
+	    }
 	    /* If we're beyond the number of items in this result set
 	       or: the data is null
 	       or: noBindBlob is set and the data type is IMAGE or TEXT
@@ -2819,16 +3022,25 @@ static void dealloc_dynamic(imp_sth)
     CS_INT restype;
 	
     if (DBIS->debug >= 2)
-	PerlIO_printf(DBILOGFP, "    syb_st_destroy: ct_dynamic(CS_DEALLOC) for %s\n",
+	PerlIO_printf(DBILOGFP, "    dealloc_dynamic: ct_dynamic(CS_DEALLOC) for %s\n",
 		imp_sth->dyn_id);
     
     ret = ct_dynamic(imp_sth->cmd, CS_DEALLOC, imp_sth->dyn_id,
 		     CS_NULLTERM, NULL, CS_UNUSED);
-    if(ret != CS_SUCCEED)
+    if(ret != CS_SUCCEED) {
+	if (DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    dealloc_dynamic: ct_dynamic(CS_DEALLOC) for %s FAILED\n",
+			  imp_sth->dyn_id);
 	return;
+    }
     ret = ct_send(imp_sth->cmd);
-    if(ret != CS_SUCCEED)
+    if(ret != CS_SUCCEED) {
+	if (DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    dealloc_dynamic: ct_send(CS_DEALLOC) for %s FAILED\n",
+			  imp_sth->dyn_id);
 	return;
+    }
+
     while(ct_results(imp_sth->cmd, &restype) == CS_SUCCEED)
 	;
 
@@ -2839,7 +3051,7 @@ static void dealloc_dynamic(imp_sth)
 	I32 retlen;
 	hv_iterinit(hv);
 	while( (sv = hv_iternextsv(hv, &key, &retlen)) != NULL ) {
-	    if (sv != &sv_undef) {
+	    if (sv != &PL_sv_undef) {
 		phs_t *phs_tpl = (phs_t*)(void*)SvPVX(sv);
 		sv_free(phs_tpl->sv);
 	    }
@@ -2887,6 +3099,13 @@ void     syb_st_destroy(sth, imp_sth)
     }
 
     cleanUp(imp_sth);
+
+    /* Gene Ressler says that this call can fail because we've already 
+       dropped the connection. I'm not sure if this is really a problem
+       or if it can be ignored. XXX */
+    if(DBIS->debug >= 3)
+	PerlIO_printf(DBILOGFP, "    ct_cmd_drop() -> CS_COMMAND %x\n", imp_sth->cmd);
+
 
     ret = ct_cmd_drop(imp_sth->cmd);
     if(DBIS->debug >= 2) {
@@ -3168,7 +3387,8 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
     if (!imp_sth->done_desc && (par - S_st_fetch_params) < 10) {
 	/* Because of the way Sybase returns information on returned values
 	   in a SELECT statement we can't call describe() here. */
-	return Nullsv;
+	/* Changed Nullsv to PL_sv_undef here to fix PR 541. */
+	return &PL_sv_undef; 
     }
 
     i = DBIc_NUM_FIELDS(imp_sth);
@@ -3219,7 +3439,7 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 		av_store(av, i, newSViv(imp_sth->datafmt[i].scale));
 		break;
 	      default:
-		av_store(av, i, newSVsv(&sv_undef));
+		av_store(av, i, newSVsv(&PL_sv_undef));
 	    }
 	}
 	break;
@@ -3254,13 +3474,13 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	retsv = newSViv(imp_sth->noBindBlob);
 	break;
       case 15:
-	retsv = &sv_undef;    /* fix for PR/394 */
+	retsv = &PL_sv_undef;    /* fix for PR/394 */
 	break;
       default:
 	return Nullsv;
     }
 
-    if(retsv == &sv_no || retsv == &sv_yes || retsv == &sv_undef)
+    if(retsv == &sv_no || retsv == &sv_yes || retsv == &PL_sv_undef)
 	return retsv;
 
     return sv_2mortal(retsv);
@@ -3641,7 +3861,9 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	} else {
 	    if(ct_command(imp_sth->cmd, CS_RPC_CMD, imp_sth->proc, 
 			  CS_NULLTERM, CS_NO_RECOMPILE) != CS_SUCCEED) {
-		warn("ct_command(CS_RPC_CMD, %s) failed\n", imp_sth->proc);
+		char errbuf[1024];
+		sprintf(errbuf, "ct_command(CS_RPC_CMD, %s) failed\n", imp_sth->proc);
+		syb_set_error(imp_dbh, -1, errbuf);
 		return 0;
 	    }
 	}
@@ -3650,7 +3872,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 
     if((rc = ct_param(imp_sth->cmd, &phs->datafmt, value, value_len, 0)) 
        != CS_SUCCEED)
-	warn("ct_param() failed!");
+	syb_set_error(imp_dbh, -1, "ct_param() failed!");
 
     phs->datafmt.datatype = datatype;
 
@@ -3707,7 +3929,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 	croak("Can't bind unknown placeholder '%s'", name);
     phs = (phs_t*)SvPVX(*phs_svp);	/* placeholder struct	*/
 
-    if (phs->sv == &sv_undef) { /* first bind for this placeholder      */
+    if (phs->sv == &PL_sv_undef) { /* first bind for this placeholder      */
 	phs->sql_type = (sql_type) ? sql_type : SQL_CHAR;
         phs->ftype    = map_sql_types(phs->sql_type);
 	if(imp_sth->type == 1) { /* RPC call, must set up the datafmt struct */
@@ -3748,7 +3970,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     }
  
     if (!is_inout) {    /* normal bind to take a (new) copy of current value    */
-        if (phs->sv == &sv_undef)       /* (first time bind) */
+        if (phs->sv == &PL_sv_undef)       /* (first time bind) */
             phs->sv = newSV(0);
         sv_setsv(phs->sv, newvalue);
     }
@@ -3980,3 +4202,42 @@ static char *my_strdup(string)
     return buff;
 }
 
+static void fetchKerbTicket(imp_dbh_t *imp_dbh)
+{
+    if(imp_dbh->kerbGetTicket) {
+	dSP;
+	SV *retval;
+	int count;
+	char *server = imp_dbh->server;
+
+	if(!*server) {
+	    char *s = getenv("DSQUERY");
+	    if(s && *s) {
+		server = s;
+	    } else {
+		server = "SYBASE";
+	    }
+	}
+	
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(sp);
+	
+	XPUSHs(sv_2mortal(newSVpv(server, 0)));
+	
+	PUTBACK;
+	if((count = perl_call_sv(imp_dbh->kerbGetTicket, G_SCALAR)) != 1)
+	    croak("A Kerberos Ticket handler can't return a LIST.");
+	SPAGAIN;
+	retval = POPs;
+	
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+
+	if(SvPOK(retval)) {
+	    strncpy(imp_dbh->kerberosPrincipal, SvPVX(retval), 31);
+	    imp_dbh->kerberosPrincipal[31] = 0;
+	}
+    }
+}

@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.47 2003/12/24 19:15:35 mpeppler Exp $
+# $Id: Sybase.pm,v 1.59 2004/06/16 13:44:54 mpeppler Exp $
 
-# Copyright (c) 1996-2003   Michael Peppler
+# Copyright (c) 1996-2004   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -24,10 +24,11 @@
 
 
     $hostname = Sys::Hostname::hostname();
-    $VERSION = '1.02';
-    my $Revision = substr(q$Revision: 1.47 $, 10);
+    $init_done = 0;
+    $VERSION = '1.03';
+    my $Revision = substr(q$Revision: 1.59 $, 10);
 
-    require_version DBI 1.02;
+    require_version DBI 1.30;
 
     bootstrap DBD::Sybase $VERSION;
 
@@ -36,17 +37,6 @@
     $err = 0;		# The $DBI::err value
     $errstr = '';
     $sqlstate = "00000";
-
- if(0) {
-    my %syb_api = (
-	'nsql' => ['db', { U =>[2,0,'$statement [, $type [, $callback ] ]'] } ],
-			);
-    foreach my $method (keys %syb_api){
-	DBI->_install_method("DBI::$syb_api{$method}->[0]::$method", 
-			     'Sybase.pm',
-			     $syb_api{$method}->[1]);
-    }
-}
 
     sub driver {
 	return $drh if $drh;
@@ -60,7 +50,18 @@
 	    'State'   => \$DBD::Sybase::sqlstate,
 	    'Attribution' => 'Sybase DBD by Michael Peppler',
 	    });
+
+	if($DBI::VERSION >= 1.34 && !$DBD::Sybase::init_done) {
+	    #	*syb_nsql = *nsql;
+	    DBD::Sybase::db->install_method('syb_nsql');
+	    ++$DBD::Sybase::init_done;
+	}
+
 	$drh;
+    }
+
+    sub CLONE {
+	undef $drh;
     }
 
 
@@ -88,6 +89,17 @@
 	# OK - let us see what sort of server we're connected to. We
 	# need this because some of the SQL commands that we need to send
 	# to the server depend on this information.
+    {
+	
+	# local $this->{AutoCommit} = 1; #commented out - see bug #551.
+
+        # Attributes that are passed in only get set *after* this routine
+        # exits (i.e. when connect() returns).
+        # So we need to set any syb_xxx attributes here:
+        foreach (grep(/^syb/, keys(%$attr))) {
+	    $this->{$_} = $attr->{$_};
+	}
+	
 	my $sth = $this->prepare("select \@\@version");
 	if($sth->execute) {
 	    my $row = $sth->fetch;
@@ -102,6 +114,7 @@
 		}
 	    }
 	}
+    }
 
 	$this;
     }
@@ -311,32 +324,6 @@
 	if($sth->execute) {
 	    $data = $sth->fetchall_arrayref;
 	}
-#	} else {
-#	    $data = [
-#       ['bit',-7,1,undef,undef,undef,'0','0',2,undef,'0',undef,'bit',undef,undef,undef,undef,undef,undef],
-#       ['tinyint',-6,3,undef,undef,undef,1,'0',2,1,'0','0','tinyint',undef,undef,undef,undef,undef,undef],
-#       ['image',-4,'2147483647','0x',undef,undef,1,'0',1,undef,'0',undef,'image',undef,undef,undef,undef,undef,undef],
-#       ['timestamp',-3,8,'0x',undef,undef,1,'0',2,undef,'0',undef,'timestamp',undef,undef,undef,undef,undef,undef],
-#       ['varbinary',-3,255,'0x',undef,'maxlength',1,'0',2,undef,'0',undef,'varbinary',undef,undef,undef,undef,undef,undef],
-#       ['binary',-2,255,'0x',undef,'length',1,'0',2,undef,'0',undef,'binary',undef,undef,undef,undef,undef,undef],
-#       ['text',-1,'2147483647','\'','\'',undef,1,1,1,undef,'0',undef,'text',undef,undef,undef,undef,undef,undef],
-#       ['char',1,255,'\'','\'','length',1,1,3,undef,'0',undef,'char',undef,undef,undef,undef,undef,undef],
-#       ['nchar',1,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nchar',undef,undef,undef,undef,undef,undef],
-#       ['numeric',2,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','numeric','0',38,undef,undef,undef,undef],
-#       ['decimal',3,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','decimal','0',38,undef,undef,undef,undef],
-#       ['money',3,19,'\$',undef,undef,1,'0',2,'0',1,'0','money',undef,undef,undef,undef,undef,undef],
-#       ['smallmoney',3,10,'\$',undef,undef,1,'0',2,'0',1,'0','smallmoney',undef,undef,undef,undef,undef,undef],
-#       ['int',4,10,undef,undef,undef,1,'0',2,'0','0','0','int',undef,undef,undef,undef,undef,undef],
-#       ['smallint',5,5,undef,undef,undef,1,'0',2,'0','0','0','smallint',undef,undef,undef,undef,undef,undef],
-#       ['float',6,15,undef,undef,undef,1,'0',2,'0','0','0','float',undef,undef,undef,undef,10,undef],
-#       ['real',7,7,undef,undef,undef,1,'0',2,'0','0','0','real',undef,undef,undef,undef,10,undef],
-#       ['datetime',11,23,'\'','\'',undef,1,'0',3,undef,'0',undef,'datetime',undef,undef,93,undef,undef,undef],
-#       ['smalldatetime',11,16,'\'','\'',undef,1,'0',3,undef,'0',undef,'smalldatetime',undef,undef,93,undef,undef,undef],
-#       ['nvarchar',12,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nvarchar',undef,undef,undef,undef,undef,undef],
-#       ['sysname',12,30,'\'','\'','maxlength',1,1,3,undef,'0',undef,'sysname',undef,undef,undef,undef,undef,undef],
-#       ['varchar',12,255,'\'','\'','maxlength',1,1,3,undef,'0',undef,'varchar',undef,undef,undef,undef,undef,undef]
-#		    ];
-#	}
 	my $ti = 
 	[     {   TYPE_NAME         => 0,
 		  DATA_TYPE         => 1,
@@ -359,6 +346,15 @@
 		  interval_precision => 18,
 	      },
 	];
+	# ASE 11.x only returns 13 columns:
+	my $c;
+	if(($c = scalar(@{$data->[0]})) < 19) {
+	  foreach (keys(%{$ti->[0]})) {
+	    if($ti->[0]->{$_} >= $c) {
+	      delete($ti->[0]->{$_});
+	    }
+	  }
+	}
 	push(@$ti, @$data);
 
 	return $ti;
@@ -373,6 +369,7 @@
 	my $retrycount = $dbh->FETCH('syb_deadlock_retry');
 	my $retrysleep = $dbh->FETCH('syb_deadlock_sleep') || 60;
 	my $retryverbose = $dbh->FETCH('syb_deadlock_verbose');
+	my $nostatus = $dbh->FETCH('syb_nsql_nostatus');
 
 #	warn "retrycount = $retrycount, retrysleep = $retrysleep, verbose = $retryverbose\n";
 
@@ -412,7 +409,13 @@
 		$sth->execute || die $sth->errstr; 
 #		$sth->execute;
 		do {
-		    if ( $type eq "HASH" ) {
+		    if ( $DBD::Sybase::syb_nsql_nostatus &&
+			 $sth->{syb_result_type} == &CS_STATUS_RESULT ) {
+			while ( $data = $sth->fetchrow_arrayref ) {
+			    ; # do not include return status rows..
+			}  
+		    } 
+		    elsif ( $type eq "HASH" ) {
 			while ( $data = $sth->fetchrow_hashref ) {
 			    die $sth->errstr if($sth->err);
 			    if ( ref $callback eq "CODE" ) {
@@ -486,6 +489,11 @@
 	else {
 	    return @res;
 	}
+    }
+    
+    if($DBI::VERSION >= 1.34) {
+	*syb_nsql = *nsql;
+#	DBD::Sybase::db->install_method('syb_nsql');
     }
 }
 
@@ -608,13 +616,36 @@ properties. Currently the following are supported:
 
 =item server
 
-Specify the server that we should connect to
+Specify the server that we should connect to.
 
      $dbh = DBI->connect("dbi:Sybase:server=BILLING",
 			 $user, $passwd);
 
 The default server is I<SYBASE>, or the value of the I<$DSQUERY> environment
 variable, if it is set.
+
+=item host
+=item port
+
+If you built DBD::Sybase with OpenClient 12.5.1 or later, then you can
+use the I<host> and I<port> values to define the server you want to
+connect to. This will by-pass the server name lookup in the interfaces file.
+This is useful in the case where the server hasn't been entered in the 
+interfaces file.
+
+     $dbh = DBI->connect("dbi:Sybase:host=db1.domain.com;port-4100",
+			 $user, $passwd);
+
+=item maxConnect
+
+By default DBD::Sybase (and the underlying OpenClient libraries) is limited
+to openening 25 simultaneous connections to one or more database servers.
+If you need more than 25 connections at the same time, you can use the
+I<maxConnect> option to increase this number.
+
+     $dbh = DBI->connect("dbi:Sybase:maxConnect=100",
+			 $user, $passwd);
+
 
 =item database
 
@@ -693,14 +724,14 @@ timeout value. See also the Open Client documentation on CS_TIMEOUT.
 Specify the name for this connection that will be displayed in sp_who
 (ie in the sysprocesses table in the I<program_name> column).
 
-    $dbh->DBI->connect("dbi:Sybase:scriptName=myScript", $user, $password);
+    $dbh=DBI->connect("dbi:Sybase:scriptName=myScript", $user, $password);
 
 =item hostname
 
 Specify the hostname that will be displayed by sp_who (and will be stored
 in the hostname column of sysprocesses)..
 
-    $dbh->DBI->connect("dbi:Sybase:hostname=kiruna", $user, $password);
+    $dbh=DBI->connect("dbi:Sybase:hostname=kiruna", $user, $password);
 
 =item tdsLevel
 
@@ -710,7 +741,7 @@ In general this is automatically negotiated between the client and the
 server, but in certain cases this may need to be forced to a lower level
 by the client. 
 
-    $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
+    $dbh=DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
 
 B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
 features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
@@ -720,7 +751,39 @@ features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
 Specify the use of the client password encryption supported by CT-Lib.
 Specify a value of 1 to use encrypted passwords.
 
-    $dbh->DBI->connect("dbi:Sybase:encryptPassword=1", $user, $password);
+    $dbh=DBI->connect("dbi:Sybase:encryptPassword=1", $user, $password);
+
+=item kerberos
+
+Note: Requires OpenClient 11.1.1 or later.
+
+Sybase and OpenClient can use Kerberos to perform network-based login.
+If you use Kerberos for authentication you can use this feature and pass
+a kerberos serverprincipal using the C<kerberos=value> parameter:
+
+    $dbh = DBI->connect("dbi:Sybase:kerberos=$serverprincipal", '', '');
+
+In addition, if you have a system for retrieving Kerberos serverprincipals at
+run-time you can tell DBD::Sybase to call a perl subroutine to get
+the serverprincipal from connect():
+
+    sub sybGetPrinc {
+        my $srv = shift;
+        return the serverprincipal...
+    }
+    $dbh = DBI->connect('dbi:Sybase:server=troll', '', '', { syb_kerberos_serverprincipal => \&sybGetPrinc });
+
+The subroutine will be called with one argument (the server that we will
+connect to, using the normal Sybase behavior of checking the DSQUERY
+environment variable if no server is specified in the connect()) and is
+expected to return a string (the Kerberos serverprincipal) to the caller.
+
+=item sslCAFile
+
+Specify the location of an alternate I<trusted.txt> file for SSL
+connection negotiation:
+
+  $dbh->DBI->connect("dbi:Sybase:sslCAFile=/usr/local/sybase/trusted.txt.ENGINEERING", $user, $password); 
 
 =back
 
@@ -729,7 +792,6 @@ together by separating each entry with a semi-colon:
 
     $dbh = DBI->connect("dbi:Sybase:server=ENGINEERING;packetSize=8192;language=us_english;charset=iso_1",
 			$user, $pwd);
-
 
 =head1 Handling Multiple Result Sets
 
@@ -793,8 +855,6 @@ See also the C<syb_output_param> func() call to handle stored procedures
 that B<only> return B<OUTPUT> parameters.
 
 =head1 $sth->execute() failure mode behavior
-
-B<THIS HAS CHANGED IN VERSION 0.21!>
 
 DBD::Sybase has the ability to handle multi-statement SQL commands
 in a single batch. For example, you could insert several rows in 
@@ -1487,7 +1547,7 @@ The DBI docs mention the following regarding NULL values and placeholders:
 
 =back
 
-This will not work with a Sybase database server. If you attempt the 
+This will I<not> work with a Sybase database server. If you attempt the 
 above construct you will get the following error:
 
 =over 4
@@ -1594,6 +1654,13 @@ You can also use positional parameters:
 
 You may I<not> mix positional and named parameter in the same prepare.
 
+You I<can't> mix placeholder parameters and hard coded parameters. For example
+
+    $sth = $dbh->prepare("exec my_proc \@p1 = 1, \@p2 = ?");
+
+will I<not> work - because the @p1 parameter isn't parsed correctly
+and won't be sent to the server.
+
 You can specify I<OUTPUT> parameters in the usual way, but you can B<NOT>
 use bind_param_inout() to get the output result - instead you have to call
 fetch() and/or $sth->func('syb_output_params'):
@@ -1644,26 +1711,6 @@ See the I<set> command in the Sybase Adaptive Server Enterprise Reference
 Manual for more information on the set command and on the arithabort option.
 
 
-=head1 BUGS
-
-You can run out of space in the tempdb database if you use a lot of
-calls with bind variables (ie ?-style placeholders) without closing the
-connection. On my system, with an 8 MB tempdb database I run out of space
-after 760 prepare() statements with ?-parameters. This is because
-Sybase creates stored procedures for each prepare() call. So my
-suggestion is to only use ?-style placeholders if you really need them
-(i.e. if you are going to execute the same prepared statement multiple
-times).
-
-The new primary_key_info() method will only return data for tables 
-where a declarative "primary key" constraint was included when the table
-was created.
-
-I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi .
-You can use it to view known problems, or to report new ones. Keep in
-mind that peppler.org is connected to the net via a K56 dialup line, so
-it may be slow.
-
 =head1 Using DBD::Sybase with MS-SQL 
 
 MS-SQL started out as Sybase 4.2, and there are still a lot of similarities
@@ -1692,6 +1739,10 @@ exists in Sybase::DBlib.
 Usage:
 
    @data = $dbh->func($sql, $type, $callback, 'nsql');
+
+If the DBI version is 1.34 or later, then you can also call it this way:
+
+   @data = $dbh->syb_nsql($sql, $type, $callback);
 
 This executes the query in $sql, and returns all the data in @data. The 
 $type parameter can be used to specify that each returned row be in array
@@ -1722,10 +1773,66 @@ Number of seconds to sleep between deadlock retries. Default is 60.
 
 Enable verbose logging of deadlock retry logic. Default is off.
 
+=item syb_nsql_nostatus (bool)
+
+If true then stored procedure return status values (i.e. results of type
+CS_STATUS_RESULT) are ignored.
+
 =back
 
 Deadlock detection will be added to the $dbh->do() method in a future
 version of DBD::Sybase. 
+
+=head1 Multi-Threading
+
+DBD::Sybase is thread-safe (i.e. can be used in a multi-threaded
+perl application where more than one thread accesses the database
+server) with the following restrictions:
+
+=over 4
+
+=item * perl version >= 5.8
+
+DBD::Sybase requires the use of I<ithreads>, available in the perl 5.8.0
+release. It will not work with the older 5.005 threading model.
+
+=item * Sybase thread-safe libraries
+
+Sybase's Client Library comes in two flavors. DBD::Sybase must find the
+thread-safe version of the libraries (ending in _r on Unix/linux). This 
+means Open Client 11.1.1 or later. In particular this means that you can't
+use the 10.0.4 libraries from the free 11.0.3.3 release on linux if you
+want to use multi-threading.
+
+=item * use DBD::Sybase
+
+You I<must> include the C<use DBD::Sybase;> line in your program. This
+is needed because DBD::Sybase needs to do some setup I<before> the first
+thread is started.
+
+=back
+
+You can check to see if your version of DBD::Sybase is thread-safe at
+run-time by calling DBD::Sybase::thread_enabled(). This will return
+I<true> if multi-threading is available.
+
+See t/thread.t for a simple example.
+
+=head1 BUGS
+
+You can run out of space in the tempdb database if you use a lot of
+calls with bind variables (ie ?-style placeholders) without closing the
+connection and Sybase 11.5.x or older. This is because
+Sybase creates stored procedures for each prepare() call. 
+In 11.9.x and later Sybase will create "light-weight" stored procedures
+which don't use up any space in the tempdb database.
+
+The primary_key_info() method will only return data for tables 
+where a declarative "primary key" constraint was included when the table
+was created.
+
+I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi .
+You can use it to view known problems, or to report new ones. 
 
 
 =head1 SEE ALSO
@@ -1742,7 +1849,7 @@ DBD::Sybase by Michael Peppler
 
 =head1 COPYRIGHT
 
-The DBD::Sybase module is Copyright (c) 1997-2003 Michael Peppler.
+The DBD::Sybase module is Copyright (c) 1996-2004 Michael Peppler.
 The DBD::Sybase module is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself.
 

@@ -5,7 +5,7 @@ CONFIG
 README
 README.vms
 README.freetds
-PWD
+PWD.factory
 Sybase.h
 Sybase.pm
 Sybase.xs
@@ -21,6 +21,7 @@ t/main.t
 t/place.t
 t/exec.t
 t/nsql.t
+t/thread.t
 t/xblob.t
 t/screen.jpg
 t/_test.pm
@@ -29,3 +30,4 @@ eg/Show.cgi
 eg/dbschema.pl
 eg/check-space.pl
 
+META.yml                                 Module meta-data (added by MakeMaker)

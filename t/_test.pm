@@ -1,3 +1,5 @@
+# $Id: _test.pm,v 1.1 2004/01/21 15:46:58 mpeppler Exp $
+
 package _test;
 
 my ($Uid, $Pwd, $Srv, $Db);

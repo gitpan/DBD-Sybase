@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.9 2003/12/24 19:15:35 mpeppler Exp $
+# $Id: main.t,v 1.10 2004/06/11 11:52:00 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -9,6 +9,8 @@ use lib 'blib/arch';
 
 use lib 't';
 use _test;
+
+use Data::Dumper;
 
 BEGIN {print "1..16\n";}
 END {print "not ok 1\n" unless $loaded;}
@@ -155,6 +157,11 @@ do {
     ++$result_set;
 } while($sth->{syb_more_results});
 
+
+#my $ti = $dbh->type_info_all;
+#foreach
+my @type_info = $dbh->type_info(DBI::SQL_CHAR);
+print Dumper(\@type_info);
 
 $dbh->disconnect;
 

@@ -1,4 +1,35 @@
-$Id: CHANGES,v 1.45 2003/12/24 19:15:35 mpeppler Exp $
+$Id: CHANGES,v 1.54 2004/06/11 11:52:00 mpeppler Exp $
+
+Release 1.03
+
+	Added linking of threaded Sybase libs if perl is built with
+	threading turned on.
+	Added CLONE() method.
+	Minor changes to dbdimp.c to be thread-safe.
+	Added t/thread.t test script.
+	Changes to Makefile.PL to make configuration easier.
+	Add support for Kerberos-based network login.
+	Handle new library names (libsybct vs. libct).
+        Make sure that cached statement handle attributes (NAME_lc, etc)
+	are cleared when multiple result sets are processed.
+	Add host and port connection properties, to allow connections
+        to ASE servers that are not defined in the interfaces file
+        (requires OCS 12.5.1)
+	Add ability to dynamically increase the maximum number of 
+	connections (thanks to Ed Avis).
+	Add ability to ignore stored proc return status in nsql() (thanks
+	to Merijn Broeren)
+	Fix Makefile.PL umask() issue on Win32 (thanks to Darin Delegal).
+
+	Bugs Fixed:
+
+	541 - $sth->{NAME} fails right after prepare().
+	551 - Tests fail when using perl 5.6.1.
+	556 - Add support for user-supplied SSL certificate file.
+	557 - type_info_all broken with ASE 11.0.x
+	562 - syb_flush_finish doesn't work during the connect() phase.
+	563 - Memory leak when syb_binary_images is set.
+
 
 Release 1.02
 

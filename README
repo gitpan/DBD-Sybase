@@ -1,8 +1,8 @@
-$Id: README,v 1.21 2003/04/03 19:11:48 mpeppler Exp $
+$Id: README,v 1.23 2004/01/07 23:38:42 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996 - 2003  Michael Peppler
+   Copyright (c) 1996-2004  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -40,7 +40,8 @@ Getting Help
 
 If you are stuck please start by searching the Web, the appropriate
 mailing lists and my bug database, as it is likely that someone else
-will have experienced the same problem before you.
+will have experienced the same problem before you. Hint: Google is
+your friend :-)
 
 The sybperl-l mailing list is dedicated to Sybase <-> perl issues and 
 covers both the sybperl modules (Sybase::CTlib, etc.) and DBD::Sybase.
@@ -53,6 +54,46 @@ latter if you use the FreeTDS libraries with DBD::Sybase).
 
 
 Recent changes:
+
+Release 1.03
+
+	Added linking of threaded Sybase libs if perl is built with
+	threading turned on.
+	Added CLONE() method.
+	Minor changes to dbdimp.c to be thread-safe.
+	Added t/thread.t test script.
+	Changes to Makefile.PL to make configuration easier.
+	Add support for Kerberos-based network login.
+
+Release 1.02
+
+	Added syb_server_version attribute. This is filled in at connect()
+        time with the numeric version number (11.0.3.3, 12.5.1, etc) of the
+        server that you are connected to.
+
+	Bugs Fixed:
+
+	520 - t/exec.t fails on Win32.
+	533 - logic error in deadlock retry in nsql().
+	532 - t/xblob.t test provides false positive for win32.
+	534 - Placeholder prepare() fails with ASE 11.0.x
+
+Release 1.01
+
+	Automatically finish() statement handles if they are re-executed
+        before all the rows have been fetched.
+	Added support for new tables() syntax, thanks to Stephen Wilcoxon.
+	Added support for DATE and TIME datatypes (available in the 
+	ASE 12.5.1 release, currently undergoing beta testing).
+	Allow user to specify a database to use for the tests instead of 
+	using "tempdb" (useful if user does not have SA privileges).
+	
+	Bugs Fixed:
+
+	517 - getpwnam() isn't portable.
+	493 - Second execute on a prepared handle fails.
+	487 - Add connection information to error messages.
+	407 - Second+ statement does not use db from "use database".
 
 Release 1.00
 
@@ -78,86 +119,6 @@ Release 1.00
 	506 - Default scriptName/hostname connect() params.
 	508 - DBD::Sybase doesn't build under Win2k.
 
-Release 0.95
-
-        Support for building DBD::Sybase in 64 bit mode with the
-        64 bit version of OpenClient on Solaris, HP-UX, AIX, etc.
-        (note that perl itself must also be built in 64 bit
-        mode for this to work!)
-
-	Added column_info() method.
-
-	Added G_EVAL flag to syb_err_handler calls.
-	Improved syb_err_handler handling (thanks to Matthew Persico)
-        Fixed memory leak when opening additional connections for multiple
-        statement handles on a single database handle (thanks to Stefan
-        Harbeck)
-        Applied minor patch by Alex Fridman to get to build on WinNT.
-	Force a ct_cancel() if, due to syb_do_proc_status, we force a 
-	failure on a request that could have more results pending (Blaise 
-	Lepeuple)
-	Added syb_cancel_request_on_error attribute (see bug 471).
-	Warning - the default value for this attribute changes the behavior
-	of $sth->execute() when there is a failure that is detected in
-	multi-statement requests.
-	Added syb_bind_empty_string_as_null attribute (see bug 446) to
-	allow user configurable empty string binding semantics (convert
-	to single space [default] or to NULL).
-
-	Bugs Fixed:
-
-	431 - fetchrow_hashref() has incorrect keys when retrieving
-              multiple result sets.
-        437 - imp_sth->numRows in st_next_result not always set.
-	444 - Incorrect example for ct_get_data(). ct_get_data() SEGV
-              if passed a non-reference for $image.
-        394 - $sth->{CursorName} fails hard.
-	449 - ct_get_data() limited to 32k
-	450 - Fix incorrect NULLABLE handling.
-	452 - Incorrect $sth->finish() handling in syb_flush_finish mode
-              (thanks to Steve Willer).
-        443 - $sth->fetch produces error if called after $sth->execute on
-	      statement that doesn't return any rows.
-	411 - statement handle attributes do not change between result sets.
-	430 - $dbh->prepare can return undef without triggering RaiseError.
-	436 - Problems with make test generating errors creating 
-              Makefile.aperl.
-	441 - amadmin who,sqm fails while in a transaction.
-	446 - Empty string converts to a space (fixed by making this
-	      configurable).
-	448 - define strncasecmp as strnicmp for Win32 systems.
-	454 - syb_err_handler won't catch connect-time error.
-	456 - ping still fails if connection is dead.
-	461 - Memory leak if NOT using placeholders in selects and
-	      calling execute() multiple times.
-	464 - Binding an empty string for a date field causes "1/1/1900"
-              to be inserted (instead of NULL).
-	469 - nsql error handling bug.
-	447 - syb_db_disconnect(): ct_con_drop() failed.
-	471 - Certain class of errors isn't detected by DBD::Sybase.
-
-
-        Documentation changes to explain why 
-         ... WHERE (product_code = ? OR (? IS NULL AND product_code IS NULL))
-        doesn't work with Sybase.
-	
-
-
-Release 0.94
-
-        Added optional SQL buffer argument to syb_err_handler.
-	Interactive setting of user/server/pwd entries in PWD
-	for "make test".
-	Add syb_failed_db_fatal and syb_no_child_con attributes.
-
-	Bugs Fixed:
-
-	408 - Add the YYYYMMDD format to _date_fmt().
-	414 - Binding '' is interpreted as NULL.
-	415 - Fix buffer overlow in syb_db_login().
-	418 - Fix incorrect handing of CS_CANCELED return code in 
-              st_next_result().
-        421 - ActiveState patches.
 
 
 
@@ -173,8 +134,6 @@ access to (Sybase 12.0/Solaris 7 & Sybase 12.5/linux) and on Sybase
 the Sybase installation directory that you want to use to build 
 DBD::Sybase, and will also use the value of $SYBASE_OCS if it is set.
 
-Start by editing the PWD file to set a valid user, password and server
-for the test scripts to use.
 Make sure that the SYBASE environment variable points to the Sybase
 installation that you want to use for this build.
 
@@ -241,7 +200,7 @@ Linux:
 ------
 If the LANG or LC_ALL environment variable is set and points to an 
 entry that does not exist in $SYBASE/locales/locales.dat (in the 
-[linux] section) then you will get a core dump. This is an
+[linux] section) then you may get a core dump. This is an
 OpenClient problem. 
 See http://www.mbay.net/~mpeppler/Linux-ASE-FAQ.html#q1.14 for
 additional details.
@@ -251,9 +210,12 @@ FreeTDS:
 
 See the README.freetds file for details.
 
-The regression tests cover the normal operations, but they are by no 
-means complete, so don't necessarily believe all is fine if the
-tests succeed...
+Regression Tests:
+-----------------
+
+The regression tests cover the normal operations, but can't check
+for all combination of data and access modes. You should always test
+with your own scripts/data before moving a new release into production.
 
 NOTE: t/fail.t will *fail* on test #8 if you are connecting to 
       an 11.0.3.3 server. This is a bug in the server, and not something
@@ -262,9 +224,7 @@ NOTE: t/fail.t will *fail* on test #8 if you are connecting to
       you are interested.
 
 I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi
-You can use it to check for known problems, and to report new ones. Keep
-in mind that peppler.org lives on the end of a K56 dialup line, so it
-may be slow.
+You can use it to check for known problems, and to report new ones.
 
 See perldoc DBD::Sybase for details about the package.
 

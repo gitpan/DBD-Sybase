@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.22 2003/12/24 19:15:35 mpeppler Exp $
+   $Id: dbdimp.h,v 1.27 2004/06/11 11:52:00 mpeppler Exp $
 
-   Copyright (c) 1997-2001  Michael Peppler
+   Copyright (c) 1997-2004  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -76,14 +76,19 @@ struct imp_dbh_st {
     char      curr_db[36];
     char      tdsLevel[30];
     char      encryptPassword[10];
+    char      kerberosPrincipal[32];
+    char      host[64];		/* for use with CS_SERVERADDR */
+    char      port[20];		/* for use with CS_SERVERADDR */
+    char      maxConnect[25];
+    char      sslCAFile[255];
 
     char      serverVersion[15];
 
     int       isDead;
 
     SV	      *err_handler;
-
     SV        *row_cb;
+    SV        *kerbGetTicket;
 
     int       showEed;
     int       showSql;
@@ -93,6 +98,7 @@ struct imp_dbh_st {
     int       deadlockRetry;
     int       deadlockSleep;
     int       deadlockVerbose;
+    int       nsqlNoStatus;
 
     int       noChildCon;	/* Don't create child connections for
 				   simultaneous statement handles */
@@ -162,4 +168,3 @@ struct imp_sth_st {
 };
 #define IMP_STH_EXECUTING	0x0001
 
-int syb_db_date_fmt _((SV *, imp_dbh_t *, char *));

@@ -1,7 +1,7 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.12 2003/08/30 00:34:30 mpeppler Exp $
-   Copyright (c) 1997-2003 Michael Peppler
+/* $Id: Sybase.xs,v 1.13 2004/01/06 01:29:56 mpeppler Exp $
+   Copyright (c) 1997-2004 Michael Peppler
 
    Uses from Driver.xst
    Copyright (c) 1994,1995,1996,1997  Tim Bunce
@@ -41,6 +41,11 @@ timeout(value)
     int		value
     CODE:
     ST(0) = sv_2mortal(newSViv(syb_set_timeout(value)));
+
+void
+thread_enabled()
+    CODE:
+    ST(0) = sv_2mortal(newSViv(syb_thread_enabled()));
 
 
 MODULE = DBD::Sybase    PACKAGE = DBD::Sybase::db

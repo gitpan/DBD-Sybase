@@ -1,6 +1,6 @@
-/* $Id: Sybase.h,v 1.7 2001/12/13 01:05:26 mpeppler Exp $
+/* $Id: Sybase.h,v 1.8 2004/01/06 01:29:56 mpeppler Exp $
 
-   Copyright (c) 1997 - 2001 Michael Peppler
+   Copyright (c) 1997 - 2004 Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -110,6 +110,14 @@ int      syb_describe _((SV *sth, imp_sth_t *imp_sth));
 int      syb_bind_ph  _((SV *sth, imp_sth_t *imp_sth,
                 SV *param, SV *value, IV sql_type, SV *attribs,
 				int is_inout, IV maxlen));
+
+
+/* prototypes for module-specific functions */
+int      syb_thread_enabled _((void));
+int      syb_set_timeout _((int timeout));
+int      syb_db_date_fmt _((SV *, imp_dbh_t *, char *));
+
+
 
 #endif /* defined Sybase_h */
 
