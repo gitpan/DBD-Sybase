@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.68 2004/09/22 06:36:25 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.71 2004/10/04 14:13:32 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -50,6 +50,18 @@
 /*#define NO_CHAINED_TRAN 1*/
 #if !defined(NO_CHAINED_TRAN)
 #define NO_CHAINED_TRAN 0
+#endif
+
+/* some systems have trouble with ct_cancel().
+   If FLUSH_FINISH is 1 then the default behavior is to fetch all results
+   from the server when $sth->finish() is called instead of the normal
+   ct_cancel(CS_CANCEL_ALL) call. */
+#if !defined(FLUSH_FINISH)
+#define FLUSH_FINISH 0
+#endif
+
+#if !defined(PROC_STATUS)
+#define PROC_STATUS 0
 #endif
 
 
@@ -330,7 +342,7 @@ CS_SERVERMSG	*srvmsg;
 	    }
 	    PerlIO_printf(DBILOGFP, "text=%s\n", srvmsg->text);
 	} else {
-	    warn("   servermsg_cb -> %s\n", srvmsg->text);
+	    PerlIO_printf(DBILOGFP, "   servermsg_cb -> %s\n", srvmsg->text);
 	}
     }
 
@@ -949,12 +961,12 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     imp_dbh->encryptPassword[0]   = 0;
     imp_dbh->showSql       = 0;
     imp_dbh->showEed       = 0;
-    imp_dbh->flushFinish   = 0;
+    imp_dbh->flushFinish   = FLUSH_FINISH;
     imp_dbh->doRealTran    = NO_CHAINED_TRAN;	/* default to use chained transaction mode */
     imp_dbh->chainedSupported = 1;
     imp_dbh->quotedIdentifier = 0;
     imp_dbh->rowcount      = 0;
-    imp_dbh->doProcStatus  = 0;
+    imp_dbh->doProcStatus  = PROC_STATUS;
     imp_dbh->useBin0x      = 0;
     imp_dbh->binaryImage   = 0;   
     imp_dbh->deadlockRetry = 0;
@@ -2861,7 +2873,7 @@ st_next_result(sth, imp_sth)
 		      if(DBIS->debug >= 2)
 			  PerlIO_printf(DBILOGFP, "describe() proc status code = %d\n", imp_sth->lastProcStatus);
 		      if(imp_sth->lastProcStatus != 0) {
-			  failFlag = 1;
+			  failFlag = 2;
 		      }
 		  } else {
 		      croak("ct_fetch() for proc status failed!");
@@ -2890,7 +2902,7 @@ st_next_result(sth, imp_sth)
 
     /* Only force a failure if there are no rows to be fetched (ie on a
        normal insert/update/delete operation */
-    if(imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10) {
+    if(!failFlag && imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10) {
 	if(imp_dbh->alwaysForceFailure ||
 	   (restype != CS_STATUS_RESULT &&
 	    restype != CS_ROW_RESULT    &&
@@ -2898,7 +2910,7 @@ st_next_result(sth, imp_sth)
 	    restype != CS_CURSOR_RESULT &&
 	    restype != CS_COMPUTE_RESULT )) {
 
-	    failFlag = 1;
+	    failFlag = 3;
 	    if(DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    st_next_result() -> restype is not data result or syb_cancel_request_on_error is TRUE, force failFlag\n");
 	} else {
@@ -2909,22 +2921,42 @@ st_next_result(sth, imp_sth)
 
     /* Cancel the whole thing if we force a failure */
     /* Blaise Lepeuple, 9/26/02 */
-    if(failFlag && retcode != CS_FAIL) {
+    /* Only do the flush if the failure was forced rather than "normal".
+       In the normal case the connection is in a stable/idle state */
+    /* XXX */
+    if(failFlag && (restype != CS_CMD_DONE && restype != CS_CMD_FAIL) && retcode != CS_FAIL) {
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    st_next_result() -> failFlag set - clear request\n");
 	syb_st_finish(sth, imp_sth);
     }
-
-
-    if(failFlag || retcode == CS_FAIL || retcode == CS_CANCELED)
-	return CS_CMD_FAIL;
 
     /* FreeTDS added a result code CS_END_RESULTS */
     /* Do the right thing with it Frederick Staats, 6/26/03 */
     if(retcode == CS_END_RESULTS)
 	restype = CS_CMD_DONE;
 
+    if(failFlag || retcode == CS_FAIL || retcode == CS_CANCELED) {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    st_next_result() -> force CS_CMD_FAIL return\n");
+	restype = CS_CMD_FAIL;
+    }
+
     imp_sth->lastResType = restype;
+
+    /* clear the handle here - to be sure to always have a consistent 
+       handle view after command completion. */
+    if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, 
+			  "    st_next_result() -> got %s: resetting ACTIVE, moreResults, dyn_execed, exec_done\n",
+			  restype == CS_CMD_DONE ? "CS_CMD_DONE" : "CS_CMD_FAIL");
+	imp_sth->moreResults = 0;
+	imp_sth->dyn_execed  = 0;
+	imp_sth->exec_done   = 0;
+	DBIc_ACTIVE_off(imp_sth);
+    } else {
+	DBIc_ACTIVE_on(imp_sth);
+    }
   
     return restype;
 }
@@ -3248,6 +3280,7 @@ syb_st_execute(sth, imp_sth)
 
     restype = st_next_result(sth, imp_sth);
 
+#if 0
     if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, 
@@ -3260,6 +3293,7 @@ syb_st_execute(sth, imp_sth)
     } else {
 	DBIc_ACTIVE_on(imp_sth);
     }
+#endif
 
     if(restype == CS_CMD_FAIL)
 	return -2;
@@ -3310,7 +3344,6 @@ syb_st_fetch(sth, imp_sth)
     /* that describe() executed sucessfuly so the memory buffers	*/
     /* are allocated and bound.						*/
     if ( !DBIc_is(imp_sth, DBIcf_ACTIVE) || !imp_sth->exec_done ) {
-	/* warn("no statement executing"); */
 	return Nullav;
     }
 
@@ -3362,6 +3395,11 @@ syb_st_fetch(sth, imp_sth)
 
   TryAgain:
     retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read);
+
+    if(DBIS->debug >= 3) {
+	PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> ct_fetch() = %d (%d rows)\n",
+		      retcode, rows_read);
+    }
 
     switch(retcode)
     {
@@ -3465,11 +3503,13 @@ syb_st_fetch(sth, imp_sth)
 		      restype);
 
 	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
+#if 0
 	      if(DBIS->debug >= 2)
 		  PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> resetting ACTIVE, moreResults, dyn_execed\n");
 	      imp_sth->moreResults = 0;
 	      imp_sth->dyn_execed = 0;
 	      DBIc_ACTIVE_off(imp_sth);
+#endif
 	      return Nullav;
 	  } else {		/* XXX What to do here??? */
 	      if(restype == CS_COMPUTE_RESULT)
@@ -3556,10 +3596,15 @@ int      syb_st_finish(sth, imp_sth)
     /* The SvOK() test is from Henry Asseily. It is there to
        avoid a possible infinite loop in the case where the handle
        is active, but has been invalidated by OPenSwitch. */
-    if (imp_dbh->flushFinish && !(SvTRUE(DBIc_ERR(imp_dbh)))) {
+    /* Changed to check imp_dbh->lasterr instead */
+    /*    if (imp_dbh->flushFinish && !(SvTRUE(DBIc_ERR(imp_dbh)))) { */
+/*    if (imp_dbh->flushFinish && !imp_dbh->lasterr) { */
+/* It is believed that the fixes applied to st_next_result() makes the
+   imp_dbh->lasterr check unnecessary */
+    if (imp_dbh->flushFinish) {
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_finish() -> flushing\n");
-	while (DBIc_ACTIVE(imp_sth) && !imp_dbh->isDead) {
+	while (DBIc_ACTIVE(imp_sth) && !imp_dbh->isDead && imp_sth->exec_done) {
 	    AV *retval;
 	    do {
 		retval = syb_st_fetch(sth, imp_sth);

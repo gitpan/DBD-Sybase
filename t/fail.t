@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.5 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: fail.t,v 1.7 2004/10/02 08:38:37 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -16,19 +16,20 @@ print "ok 1\n";
 
 ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0, syb_flush_finish => 1});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;
 
 my $rc;
-
+#DBI->trace(4);
 my $sth = $dbh->prepare("
 select * from sysusers
 select * from no_such_table
 select * from master..sysdatabases
 ");
 $rc = $sth->execute;
+
 defined($rc) and print "not ok 2\n"
     or print "ok 2\n";
 $sth = $dbh->prepare("select * from sysusers\n");

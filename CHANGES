@@ -1,4 +1,4 @@
-$Id: CHANGES,v 1.61 2004/09/21 12:51:56 mpeppler Exp $
+$Id: CHANGES,v 1.62 2004/10/01 13:05:18 mpeppler Exp $
 
 Release 1.05
 
@@ -10,6 +10,7 @@ Release 1.05
 	Add $sth->syb_describe() call, taken from Sybase::CTlib's 
 	ct_describe().
 	Add ISO8601 date/time format for output.
+	Fix $sth->finish() behavior when syb_flush_finish is turned on.
 
 Release 1.04
 

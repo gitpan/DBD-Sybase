@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.35 2004/09/22 11:36:08 mpeppler Exp $
+# $Id: Makefile.PL,v 1.36 2004/10/01 13:05:18 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -85,17 +85,20 @@ sub configure {
 
 	$attr{$key} = $val;
     }
-    if($attr{SYBASE} && -d $attr{SYBASE}) {
-	$SYBASE = $attr{SYBASE}; 
-    } else {
-	$SYBASE = $sybase_dir;
-    }
 
-    $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
+    if(-d $sybase_dir) {
+	$SYBASE = $sybase_dir;
+    } else {
+	if($attr{SYBASE} && -d $attr{SYBASE}) {
+	    $SYBASE = $attr{SYBASE};
+	}
+    }
 
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
     }
+
+    $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
 
     # System 12.0 has a different directory structure...
     if(defined($ENV{SYBASE_OCS})) {
