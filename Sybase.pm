@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.72 2004/09/22 06:36:25 mpeppler Exp $
+# $Id: Sybase.pm,v 1.73 2004/09/23 15:32:48 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04.8';
-    my $Revision = substr(q$Revision: 1.72 $, 10);
+    $VERSION = '1.04_9';
+    my $Revision = substr(q$Revision: 1.73 $, 10);
 
     require_version DBI 1.30;
 

@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.34 2004/09/21 12:51:56 mpeppler Exp $
+# $Id: Makefile.PL,v 1.35 2004/09/22 11:36:08 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -239,7 +239,8 @@ sub getLibVersion {
 
     my $lib = "$dir/lib";
     opendir(DIR, $lib);
-    my @files = grep(/lib(syb)?ct\./, readdir(DIR));
+    # reverse to pick up libsybct before libct...
+    my @files = reverse(grep(/lib(syb)?ct\./, readdir(DIR)));
     closedir(DIR);
     my $file;
     foreach (@files) {
