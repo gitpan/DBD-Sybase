@@ -1,5 +1,6 @@
 #!/usr/local/bin/perl -w
-#	@(#)base.t	1.1	2/2/96
+#
+# $Id: base.t,v 1.1 1997/08/12 16:02:12 mpeppler Exp $
 
 # Base DBD Driver Test
 

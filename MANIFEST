@@ -1,7 +1,13 @@
 MANIFEST
-Makefile.PL
-PWD
+CHANGES
 README
+PWD
+Sybase.h
 Sybase.pm
+Sybase.xs
+Makefile.PL
+dbdimp.c
+dbdimp.h
 t/base.t
 t/main.t
+eg/Show.cgi

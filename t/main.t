@@ -1,9 +1,13 @@
 #!/usr/local/bin/perl
-#	@(#)main.t	1.1	2/2/96
+#
+# $Id: main.t,v 1.1 1997/08/12 16:01:50 mpeppler Exp mpeppler $
 
 # Base DBD Driver Test
 
-BEGIN {print "1..8\n";}
+use lib 'blib/lib';
+use lib 'blib/arch';
+
+BEGIN {print "1..12\n";}
 END {print "not ok 1\n" unless $loaded;}
 use DBI;
 $loaded = 1;
@@ -32,32 +36,36 @@ foreach (@dirs)
 }
 
 my($switch) = DBI->internal;
-$switch->debug(0); # 2=detailed handle trace
+DBI->trace(0); # 2=detailed handle trace
 
 print "Switch: $switch->{'Attribution'}, $switch->{'Version'}\n";
 
-$switch->{'DebugDispatch'} = 0; # 2=detailed trace of all dispatching
-print "DebugDispatch: $switch->{'DebugDispatch'}\n";
+#$switch->{'DebugDispatch'} = 2; # 2=detailed trace of all dispatching
+#print "DebugDispatch: $switch->{'DebugDispatch'}\n";
 
 print "Available Drivers: ",join(", ",DBI->available_drivers()),"\n";
 
-my($dbh);
-my($drh) = DBI->install_driver('Sybase');
-print "Driver installed as $drh\n";
-$dbh = $drh->connect($Srv, $Uid, $Pwd);
+my $dbh = DBI->connect('dbi:Sybase:', $Uid, $Pwd, {syb_dbd_server=>$Srv});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;
 
-($dbh->do("use master"))
+my $rc;
+
+($rc = $dbh->do("use master"))
     and print "ok 2\n"
     or print "not ok 2\n";
+
+my $sth;
 
 ($sth = $dbh->prepare("select * from sysusers"))
     and print "ok 3\n"
     or print "not ok 3\n";
 if($sth->execute) {
     print "ok 4\n";
+    print "Fields: $sth->{NUM_OF_FIELDS}\n";
+    print "Names: @{$sth->{NAME}}\n";
+    print "Null:  @{$sth->{NULLABLE}}\n";
     my $rows = 0;
     while(@dat = $sth->fetchrow) {
 	++$rows;
@@ -66,7 +74,7 @@ if($sth->execute) {
 	}
 	print "@dat\n";
     }
-    ($rows == $sth->{CTlib}->{ROW_COUNT})
+    ($rows == $sth->rows)
 	and print "ok 5\n"
 	    or print "not ok 5\n";
     $sth->finish;
@@ -75,6 +83,7 @@ else {
     print STDERR ($DBI::err, ":\n", $sth->errstr);
     print "not ok 4\nnot ok 5\n";
 }
+undef $sth;
 ($sth = $dbh->prepare("select * from sys_users"))
     and print "ok 6\n"
     or print "not ok 6\n";
@@ -93,5 +102,42 @@ else {
 	    or print "not ok 8\n";
 #    print STDERR ($DBI::err, ":\n", $sth->errstr);
 }
+($sth = $dbh->prepare("select * from sysusers"))
+    and print "ok 9\n"
+    or print "not ok 9\n";
+if($sth->execute) {
+    print "ok 10\n";
+    my @fields = @{$sth->{NAME}};
+    my $rows = 0;
+    my $d;
+    my $ok = 1;
+    while($d = $sth->fetchrow_hashref) {
+	++$rows;
+	foreach (@fields) {
+	    if(!exists($d->{$_})) {
+		$ok = 0;
+	    }
+	    my $t = $d->{$_} || '';
+	    print "$t ";
+	}
+	print "\n";
+    }
+    $ok and print "ok 11\n"
+	or print "not ok 11\n";
+    ($rows == $sth->rows)
+	and print "ok 12\n"
+	    or print "not ok 12\n";
+    $sth->finish;
+}
+else {
+    print STDERR ($DBI::err, ":\n", $sth->errstr);
+    print "not ok 10\nnot ok 11\nnot ok 12";
+}
+
+undef $sth;
+
+$dbh->{LongReadLen} = 32000;
+
+$dbh->disconnect;
 
 

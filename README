@@ -1,8 +1,8 @@
-	@(#)README	1.2	2/2/96
+$Id: README,v 1.1 1997/09/25 00:26:01 mpeppler Exp mpeppler $
 	
-DBD::Sybase  --  a Sybase DBI driver for Perl 5.
+	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996  Michael Peppler
+   Copyright (c) 1996, 1997  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -13,69 +13,94 @@ DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
 
 
-This Sybase DBI driver is built on top of my Sybase::CTlib module. You
-will need to have that installed before you can do anything with this
-package. You will also need Tim Bunce's DBI module, latest
-release. Both of these are available from CPAN:
+This Sybase DBI driver is built using the Sybase OpenClient Client
+Library (aka CTlibrary). You will need to have that installed before
+you can do anything with this package. You will also need Tim Bunce's
+DBI module, latest release. DBI is available from CPAN, in
 
-    DBI is in "CPAN"/authors/id/TIMB/DBI/DBI-0.xx-tar.gz
-    CTlib is in "CPAN"/authors/id/MEWP/sybperl-2.xx-tar.gz
+    "CPAN"/authors/id/TIMB/DBI/DBI-0.xx-tar.gz
 
-Please get the latest versions of both of these packages.
+The Sybase OpenClient libraries are of course available from Sybase,
+except for Linux where you can get a freeware, slightly out of date
+version of the libraries from my homepage (http://www.mbay.net/~mpeppler).
 
-DBD::Sybase is an emulation package. It tries to implement the DBI API
-on top of the Sybase::CTlib module. It is intended for those who
-absolutely NEED to have a (fairly) compatible API between different
-RDBMS engines. If you intend to write extensive code which accesses
-only a Sybase engine I STRONGLY recommend that you use Sybase::DBlib
-or Sybase::CTlib instead: they are better supported and are much more
-stable!
+This version of DBD::Sybase is a first attempt at a (fairly) complete
+implementation of the DBI spec. There are no doubt quite a few bugs,
+and certain things (such as BLOBs and parameter binding on execution
+of insert/update) aren't handled right.
+
+Building:
+
+Edit Makefile.PL and set $SYBASE to the Sybase installation directory
+on your system.
+Run perl Makefile.PL, make, make test.
+
+The regression tests are minimal at the moment so don't necessarily
+believe all is fine if the tests succeed...
+
+I still have a problem with $dbh->disconnect which produces a message
+like
+	disconnect(DBI::db=HASH(0x1b5fe0)) invalidates -3 active cursor(s) at t/main.t line 141.
+
+for some reason. This will get fixed when I figure out what is wrong.
+
 
 Let me repeat: this is ALPHA software - testing has been minimal!!!
+
+
 
 So what is implemented?
 
 Lets take the list at the bottom of DBI.pm:
 
-DRIVER OBJECTS (not normally used by an application)
+$dbh = DBI->connect($data_source, $username, $auth);
+$dbh = DBI->connect($data_source, $username, $auth, \%attr);
 
-$dbh = $drh->connect([$database [, $username [, $auth [, \%attribs]]]]]);
-     NOTE: $database is the Sybase SERVER.
+$rc  = $dbh->disconnect;
 
+$rv  = $dbh->do($statement);
+$rv  = $dbh->do($statement, \%attr);			Not supported
+$rv  = $dbh->do($statement, \%attr, @bind_values);	Not supported
 
----------------------------------------------------------------
-DATABASE OBJECTS			    Implemented?	
+$sth = $dbh->prepare($statement);
+$sth = $dbh->prepare($statement, \%attr);		Not supported
 
-$rc  = $dbh->disconnect;			Yes
-$rc  = $dbh->commit;				No
-$rc  = $dbh->rollback;				No
-$rc  = $dbh->do($statement [, \%attr]);		Yes (ignores %attr)
+$rc = $sth->bind_col($col_num, \$col_variable);
+$rc = $sth->bind_columns(\%attr, @list_of_refs_to_vars_to_bind);
 
-$sth = $dbh->prepare($statement [, \%attr]);	Yes (ignores %attr)
-$sth = $dbh->tables();				No
+$rv = $sth->bind_param($param_num, $bind_value);	Not supported
+$rv = $sth->bind_param($param_num, $bind_value, $bind_type);	"
+$rv = $sth->bind_param($param_num, $bind_value, \%attr);	"
 
-$rv  = $dbh->errstate;				No
-@ary = $dbh->errmsg;				Yes
+$rv = $sth->execute;
+$rv = $sth->execute(@bind_values);			Not supported
 
-$sql = $dbh->quote($str);			No
+@row_ary  = $sth->fetchrow_array;
+$ary_ref  = $sth->fetchrow_arrayref;
+$hash_ref = $sth->fetchrow_hashref;
 
+$rc = $sth->finish;
 
----------------------------------------------------------------
-STATEMENT OBJECTS
+$rv = $sth->rows;
 
-$rc  = $sth->execute(@bind_values);     	Yes (ignores @bind_values)
-@ary = $sth->fetchrow;				Yes
-$rc  = $sth->finish;				Yes
+$rc  = $dbh->commit;
+$rc  = $dbh->rollback;
+
+$sql = $dbh->quote($string);
+
+$rc  = $h->err;
+$str = $h->errstr;
+$rv  = $h->state;				Not supported
 
 
 $sth->{NAME}       (\@)				Yes
-$sth->{NULLABLE}   (\@)				No
+$sth->{NULLABLE}   (\@)				Yes
 $sth->{TYPE}       (\@)				Yes
-$sth->{PRECISION}  (\@)				No
-$sth->{SCALE}      (\@)				No
+$sth->{PRECISION}  (\@)				Yes
+$sth->{SCALE}      (\@)				Yes
 
-$sth->{NUM_OF_FIELDS}  ($)			No
-$sth->{NUM_OF_PARAMS}  ($)			No
+$sth->{NUM_OF_FIELDS}  ($)			Yes
+$sth->{NUM_OF_PARAMS}  ($)			Yes
 
 ---------------------------------------------------------------
 
@@ -84,7 +109,7 @@ Special behaviour:
 ==================
 
 The Sybase API allows you to submit SQL code to the server that can
-return multiple result sets. When using CTlib, for example, this is
+return multiple result sets. When using Sybase::CTlib, for example, this is
 handled by using a nested while loop:
 
 while($dbh->ct_results($restype) == CS_SUCCEED) {
@@ -97,12 +122,60 @@ while($dbh->ct_results($restype) == CS_SUCCEED) {
 
 The DBI API does not (normally) handle this situation. But because
 this situation can arise without the user knowing (typically when
-executing a stored procedure) I have coded fetchrow() in such a
-fashion that multiple result sets are returned sequentially.
+executing a stored procedure) I have coded fetchrow() logic
+so that multiple result sets can still be fetched. 
+
+This is done via special attribute in $sth (syb_more_results) which
+you should check after $sth->fetchrow() returns an empty array. If this
+attribute is true, then you can call $sth->fetchrow() again to get the
+next result set.
+
+One problem with this is that the standard $sth attributes (NAME,
+NULLABLE, etc) will have the values of the NEXT result set if
+$sth->{syb_more_results} is true and $sth->fetchrow returns an empty
+array.
+
+Here is an example script:
+
+
+use DBI;
+
+$dbh = DBI->connect('dbi:Sybase:', 'mpeppler', '', {RaiseError => 1});
+
+$sth = $dbh->prepare("
+select log_date, log_by from BugTrack..bug_log
+where id < 10
+order by id
+compute count(id) by id
+select * from BugTrack..bug where id < 10
+
+declare \@acc char(10)
+declare \@date datetime
+declare \@open_val money
+declare \@open_val_t money
+select \@acc='abcd', \@date='Jan 1 1997'
+exec BugTrack..t_proc \@acc, \@date out, \@open_val out, \@open_val_t out
+");
+
+$sth->execute;
+AGAIN:
+while($dat = $sth->fetchrow_hashref) {
+    foreach (keys(%$dat)) {
+	print "$_: $dat->{$_} ";
+    }
+    print "\n";
+}
+if($sth->{syb_more_results}) {
+    print "More data on the way...\n";
+    goto AGAIN;
+}
+
+__END__
 
 Comments, criticism, etc. welcome!
 
 Michael
 --
-Michael Peppler, ITF Management SA, Fontaine 13, CH-1204 Geneva
-mpeppler@itf.ch - Tel (4122) 818 3021 - Fax (4122) 312 1322
+Michael Peppler, Data Migrations, Inc.
+mpeppler@datamig.com - http://www.mbay.net/~mpeppler
+
