@@ -1,0 +1,108 @@
+	@(#)README	1.2	2/2/96
+	
+DBD::Sybase  --  a Sybase DBI driver for Perl 5.
+
+   Copyright (c) 1996  Michael Peppler
+
+   You may distribute under the terms of either the GNU General Public
+   License or the Artistic License, as specified in the Perl README file.
+
+		WARNING: THIS IS ALPHA SOFTWARE.
+		    IT IS INCOMPLETE!
+		IT IS POSSIBLY UNRELIABLE!
+
+
+
+This Sybase DBI driver is built on top of my Sybase::CTlib module. You
+will need to have that installed before you can do anything with this
+package. You will also need Tim Bunce's DBI module, latest
+release. Both of these are available from CPAN:
+
+    DBI is in "CPAN"/authors/id/TIMB/DBI/DBI-0.xx-tar.gz
+    CTlib is in "CPAN"/authors/id/MEWP/sybperl-2.xx-tar.gz
+
+Please get the latest versions of both of these packages.
+
+DBD::Sybase is an emulation package. It tries to implement the DBI API
+on top of the Sybase::CTlib module. It is intended for those who
+absolutely NEED to have a (fairly) compatible API between different
+RDBMS engines. If you intend to write extensive code which accesses
+only a Sybase engine I STRONGLY recommend that you use Sybase::DBlib
+or Sybase::CTlib instead: they are better supported and are much more
+stable!
+
+Let me repeat: this is ALPHA software - testing has been minimal!!!
+
+So what is implemented?
+
+Lets take the list at the bottom of DBI.pm:
+
+DRIVER OBJECTS (not normally used by an application)
+
+$dbh = $drh->connect([$database [, $username [, $auth [, \%attribs]]]]]);
+     NOTE: $database is the Sybase SERVER.
+
+
+---------------------------------------------------------------
+DATABASE OBJECTS			    Implemented?	
+
+$rc  = $dbh->disconnect;			Yes
+$rc  = $dbh->commit;				No
+$rc  = $dbh->rollback;				No
+$rc  = $dbh->do($statement [, \%attr]);		Yes (ignores %attr)
+
+$sth = $dbh->prepare($statement [, \%attr]);	Yes (ignores %attr)
+$sth = $dbh->tables();				No
+
+$rv  = $dbh->errstate;				No
+@ary = $dbh->errmsg;				Yes
+
+$sql = $dbh->quote($str);			No
+
+
+---------------------------------------------------------------
+STATEMENT OBJECTS
+
+$rc  = $sth->execute(@bind_values);     	Yes (ignores @bind_values)
+@ary = $sth->fetchrow;				Yes
+$rc  = $sth->finish;				Yes
+
+
+$sth->{NAME}       (\@)				Yes
+$sth->{NULLABLE}   (\@)				No
+$sth->{TYPE}       (\@)				Yes
+$sth->{PRECISION}  (\@)				No
+$sth->{SCALE}      (\@)				No
+
+$sth->{NUM_OF_FIELDS}  ($)			No
+$sth->{NUM_OF_PARAMS}  ($)			No
+
+---------------------------------------------------------------
+
+
+Special behaviour:
+==================
+
+The Sybase API allows you to submit SQL code to the server that can
+return multiple result sets. When using CTlib, for example, this is
+handled by using a nested while loop:
+
+while($dbh->ct_results($restype) == CS_SUCCEED) {
+    next unless $dbh->ct_fetchable($restype);
+
+    while(@dat = $dbh->ct_fetch) {
+       ....
+    }
+}
+
+The DBI API does not (normally) handle this situation. But because
+this situation can arise without the user knowing (typically when
+executing a stored procedure) I have coded fetchrow() in such a
+fashion that multiple result sets are returned sequentially.
+
+Comments, criticism, etc. welcome!
+
+Michael
+--
+Michael Peppler, ITF Management SA, Fontaine 13, CH-1204 Geneva
+mpeppler@itf.ch - Tel (4122) 818 3021 - Fax (4122) 312 1322
