@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.9 1999/05/17 05:46:11 mpeppler Exp $
+# $Id: Makefile.PL,v 1.10 1999/05/23 18:27:28 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -37,7 +37,9 @@ WriteMakefile('NAME'         => 'DBD::Sybase',
 	      'LDDLFLAGS'    => $lddlflags,
 	      'LDFLAGS'      => $ldflags,
 	      LINKTYPE       => $LINKTYPE,
-	      MAN3PODS       => { 'Sybase.pm' => 'blib/man3/DBD::Sybase.3' },
+	      ($^O eq 'VMS' ? 
+               (MAN3PODS    => { 'Sybase.pm' => 'blib/man3/DBD_Sybase.3' }) :
+               (MAN3PODS    => { 'Sybase.pm' => 'blib/man3/DBD::Sybase.3' })),
 	      ($] >= 5.005 ?
 	       (ABSTRACT   => 'DBI driver for Sybase datasources',
 		AUTHOR     => 'Michael Peppler (mpeppler@peppler.org)') : ()),
@@ -59,7 +61,7 @@ sub configure {
     my $sybase_dir = $ENV{SYBASE};
 
     if(!$sybase_dir) {
-	$sybase_dir = (getpwname('sybase'))[7];
+	$sybase_dir = (getpwnam('sybase'))[7];
     }
 
     open(IN, "CONFIG") || die "Can't open CONFIG: $!";
@@ -79,6 +81,9 @@ sub configure {
     } else {
 	$SYBASE = $sybase_dir;
     }
+
+    $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
+
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
     }
@@ -86,18 +91,9 @@ sub configure {
     if(! -d "$SYBASE/lib" || !-d "$SYBASE/include") {
 	die "Can't find the lib or include directories under $SYBASE!";
     }
-
-    my $test_file = "$SYBASE/lib/libct.$Config{so}";
-    if($^O eq 'MSWin32') {
-	$test_file = "$SYBASE/lib/libct.lib"; 
-    } elsif($^O eq 'VMS') {
-	$test_file = "$SYBASE/lib/libct.olb"; 
-    }
 	
-    die "Can't find any Sybase libraries in $SYBASE/lib" if(!-e $test_file);
+    die "Can't find any Sybase libraries in $SYBASE/lib" unless checkLib($SYBASE);
 
-
-    $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
 
     if($^O eq 'MSWin32') {
 	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib $attr{EXTRA_LIBS} -lm";
@@ -141,22 +137,33 @@ sub getExtraLibs {
 
     my $lib = "$dir/lib";
 
+    opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
+    my %files = map { $_ =~ s/lib([^\.]+)\..*/$1/; $_ => 1 } grep(/lib/, readdir(DIR));
+    closedir(DIR);
+
     my %x = map {$_ => 1} split(' ', $cfg);
     foreach my $f (keys(%x)) {
 	my $file = $f;
 	$file =~ s/-l//;
 	next if($file =~ /^-/);
-	if(!-e "$lib/lib$file.$Config{so}") {
-	    delete($x{$f});
-	}
+	delete($x{$f}) unless exists($files{$file});
     }
     
 
     foreach my $f (qw(insck tli sdna dnet_stub)) {
-	$x{"-l$f"} = 1 if(-e "$lib/lib$f.$Config{so}");
+	$x{"-l$f"} = 1 if exists $files{$f};
     }
 
     join(' ', keys(%x));
 }
     
 	
+sub checkLib {
+    my $dir = shift;
+
+    opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
+    my @files = grep(/libct/, readdir(DIR));
+    closedir(DIR);
+
+    scalar(@files);
+}

@@ -1,4 +1,11 @@
-$Id: CHANGES,v 1.13 1999/05/17 05:56:46 mpeppler Exp $
+$Id: CHANGES,v 1.14 1999/05/23 18:29:05 mpeppler Exp $
+
+Release 0.16
+
+	Added code to define PL_xxx symbols for pre 5.005 perls.
+	New syb_flush_finish attribute (contributed by Steve Miller).
+	Patch to Makefile.PL for VMS systems.
+	Better library detection code in Makefile.PL.
 
 Release 0.15
 

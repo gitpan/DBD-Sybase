@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.7 1999/05/17 05:56:38 mpeppler Exp $
+   $Id: dbdimp.h,v 1.8 1999/05/23 18:26:23 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -73,6 +73,7 @@ struct imp_dbh_st {
 
     int       showEed;
     int       showSql;
+    int       flushFinish;
     char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
 					   used for error reporting */
 };

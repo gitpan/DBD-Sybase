@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.14 1999/05/17 05:56:07 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.15 1999/05/23 18:28:31 mpeppler Exp $
 
-   Copyright (c) 1997, 1998  Michael Peppler
+   Copyright (c) 1997,1998,1999  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -142,11 +142,11 @@ CS_SERVERMSG	*srvmsg;
 	if(srvmsg->svrnlen > 0)
 	    XPUSHs(sv_2mortal(newSVpv(srvmsg->svrname, 0)));
 	else
-	    XPUSHs(&PL_sv_undef);
+	    XPUSHs(&sv_undef);
 	if(srvmsg->proclen > 0)
 	    XPUSHs(sv_2mortal(newSVpv(srvmsg->proc, 0)));
 	else
-	    XPUSHs(&PL_sv_undef);
+	    XPUSHs(&sv_undef);
 	XPUSHs(sv_2mortal(newSVpv(srvmsg->text, 0)));
 
 	
@@ -369,6 +369,7 @@ void syb_init(dbistate)
     SV 		*sv;
     CS_RETCODE	retcode;
     CS_INT	netio_type = CS_SYNC_IO;
+    STRLEN      lna;
 
     DBIS = dbistate;
 
@@ -397,7 +398,7 @@ void syb_init(dbistate)
     if((sv = perl_get_sv("0", FALSE)))
     {
 	char *p;
-	strcpy(scriptName, SvPV(sv, na));
+	strcpy(scriptName, SvPV(sv, lna));
 	if((p = strrchr(scriptName, '/')))
 	{
 	    ++p;
@@ -464,7 +465,9 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->hostname[0]   = 0;
     imp_dbh->scriptName[0] = 0;
     imp_dbh->database[0]   = 0;
-    
+    imp_dbh->showSql       = 0;
+    imp_dbh->showEed       = 0;
+    imp_dbh->flushFinish   = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -714,8 +717,15 @@ syb_db_use(imp_dbh, connection)
 
     sprintf(statement, "use %s", imp_dbh->database);
     ret = ct_command(cmd, CS_LANG_CMD, statement, CS_NULLTERM, CS_UNUSED);
-    if(ret != CS_SUCCEED)
+    if(ret != CS_SUCCEED) {
+	warn("ct_command failed for '%s'", statement);
 	return -1;
+    }
+    ret = ct_send(cmd);
+    if(ret != CS_SUCCEED) {
+	warn("ct_send failed for '%s'", statement);
+	return -1;
+    }
     while((ret = ct_results(cmd, &restype)) == CS_SUCCEED) {
 	if(restype == CS_CMD_FAIL)
 	    warn("DBD::Sybase - can't change context to database %s\n",
@@ -970,12 +980,21 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
     if (kl == 15 && strEQ(key, "syb_err_handler")) {
-	if(valuesv == &PL_sv_undef) {
+	if(valuesv == &sv_undef) {
 	    imp_dbh->err_handler = NULL;
 	} else if(imp_dbh->err_handler == (SV*)NULL) {
 	    imp_dbh->err_handler = newSVsv(valuesv);
 	} else {
 	    sv_setsv(imp_dbh->err_handler, valuesv);
+	}
+	return TRUE;
+    }
+    if (kl == 16 && strEQ(key, "syb_flush_finish")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->flushFinish = 1;
+	} else {
+	    imp_dbh->flushFinish = 0;
 	}
 	return TRUE;
     }
@@ -1030,8 +1049,14 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	if(imp_dbh->err_handler) {
 	    retsv = newSVsv(imp_dbh->err_handler);
 	} else {
-	    retsv = &PL_sv_undef;
+	    retsv = &sv_undef;
 	}
+    }
+    if (kl == 16 && strEQ(key, "syb_flush_finish")) {
+	if(imp_dbh->flushFinish)
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
     }
     return retsv;
 }
@@ -1648,18 +1673,24 @@ int      syb_st_finish(sth, imp_sth)
     connection = imp_sth->connection ? imp_sth->connection : 
 	imp_dbh->connection;
 
-    if (DBIc_ACTIVE(imp_sth)) {
+    if (imp_dbh->flushFinish) {
+	while (DBIc_ACTIVE(imp_sth) && syb_st_fetch(sth, imp_sth))
+	    1;
+    }
+    else {
+	if (DBIc_ACTIVE(imp_sth)) {
 #if defined(ROGUE)
-	if(ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT) == CS_FAIL) {
-	      ct_close(connection, CS_FORCE_CLOSE);
-	      imp_dbh->isDead = 1;
-	}	  
+	    if(ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT) == CS_FAIL) {
+		  ct_close(connection, CS_FORCE_CLOSE);
+		  imp_dbh->isDead = 1;
+	    }	  
 #else  
-	if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
-	      ct_close(connection, CS_FORCE_CLOSE);
-	      imp_dbh->isDead = 1;
-	}	  
+	    if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
+		  ct_close(connection, CS_FORCE_CLOSE);
+		  imp_dbh->isDead = 1;
+	    }	  
 #endif
+	}
     }
     DBIc_ACTIVE_off(imp_sth);
     return 1;
@@ -2031,6 +2062,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     char *name;
     char namebuf[30];
     phs_t *phs;
+    STRLEN lna;
 
     if (SvNIOK(ph_namesv) ) {	/* passed as a number	*/
 	name = namebuf;
@@ -2048,7 +2080,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 
     if (dbis->debug >= 2)
 	fprintf(DBILOGFP, "bind %s <== '%.200s' (attribs: %s)\n",
-		name, SvPV(newvalue,na), attribs ? SvPV(attribs,na) : "" );
+		name, SvPV(newvalue,lna), attribs ? SvPV(attribs,lna) : "" );
 
     phs_svp = hv_fetch(imp_sth->all_params_hv, name, name_len, 0);
     if (phs_svp == NULL)

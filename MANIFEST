@@ -2,6 +2,7 @@ MANIFEST
 CHANGES
 CONFIG
 README
+README.vms
 PWD
 Sybase.h
 Sybase.pm

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.15 1999/05/17 05:55:46 mpeppler Exp $
+# $Id: Sybase.pm,v 1.16 1999/05/23 18:27:56 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.15';
-    my $Revision = substr(q$Revision: 1.15 $, 10);
+    $VERSION = '0.16';
+    my $Revision = substr(q$Revision: 1.16 $, 10);
 
     require_version DBI 1.02;
 
@@ -536,7 +536,13 @@ Example:
     $dbh->do("exec someproc");    # get the showplan trace for this proc.
     $dbh->disconnect;
 
+=item syb_flush_finish
 
+B<NEW> If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
+any results remaining for the current command by actually fetching them.
+The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
+I<appears> to cause connections to hang or to fail in certain cases (although
+I've never witnessed this myself.)
 
 =back
 
