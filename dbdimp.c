@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.21 2000/03/24 04:44:04 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.22 2000/09/01 18:29:27 mpeppler Exp $
 
-   Copyright (c) 1997,1998,1999  Michael Peppler
+   Copyright (c) 1997,1998,1999,2000  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -1395,12 +1395,14 @@ dbd_preparse(imp_sth, statement)
     imp_sth_t *imp_sth;
     char *statement;
 {
-    bool in_literal = FALSE;
+    enum { DEFAULT, LITERAL, COMMENT, LINE_COMMENT } STATES;
+    int state = DEFAULT;
+    int next_state;
     char last_literal = 0;
     char *src, *start, *dest;
     phs_t phs_tpl;
     SV *phs_sv;
-    int idx=0, style=0, laststyle=0;
+    int idx=0;
     STRLEN namelen;
 
     /* allocate room for copy of statement with spare capacity	*/
@@ -1413,34 +1415,52 @@ dbd_preparse(imp_sth, statement)
     src  = statement;
     dest = imp_sth->statement;
     while(*src) {
-	if(in_literal) {
-	    if (*src == last_literal) {
-		in_literal = ~in_literal;
-	    }
-	} else {
+	next_state = state;	/* default situation */
+	switch(state) {
+	case DEFAULT:
 	    if(*src == '\'' || *src == '"') {
 		last_literal = *src;
-		in_literal = ~in_literal;
+		next_state = LITERAL;
+	    } else if(*src == '/' && *(src+1) == '*') {
+		next_state = COMMENT;
+	    } else if(*src == '-' && *(src+1) == '-') {
+		next_state = LINE_COMMENT;
 	    }
+	    break;
+	case LITERAL:
+	    if(*src == last_literal) {
+		next_state = DEFAULT;
+	    }
+	    break;
+	case COMMENT:
+	    if(*(src-1) == '*' && *src == '/') {
+		next_state = DEFAULT;
+	    }
+	    break;
+	case LINE_COMMENT:
+	    if(*src == '\n') {
+		next_state = DEFAULT;
+	    }
+	    break;
 	}
-	if (*src != '?' || in_literal) {
+/*	printf("state = %d, *src = %c, next_state = %d\n", state, *src, next_state); */
+
+	if(state != DEFAULT || *src != '?') {
 	    *dest++ = *src++;
+	    state = next_state;
 	    continue;
 	}
+	state = next_state;
 	start = dest;			/* save name inc colon	*/ 
 	*dest++ = *src++;
 	if (*start == '?') {		/* X/Open standard	*/
 	    sprintf(start,":p%d", ++idx); /* '?' -> ':p1' (etc)	*/
 	    dest = start+strlen(start);
-	    style = 3;
 	} else {			/* not a placeholder, so just copy */
 	    continue;
 	}
 	*dest = '\0';			/* handy for debugging	*/
 	namelen = (dest-start);
-	if (laststyle && style != laststyle)
-	    croak("Can't mix placeholder styles (%d/%d)",style,laststyle);
-	laststyle = style;
 	if (imp_sth->all_params_hv == NULL)
 	    imp_sth->all_params_hv = newHV();
 	phs_tpl.sv = &sv_undef;
@@ -1779,6 +1799,7 @@ st_next_result(sth, imp_sth)
     SV *sth;
     imp_sth_t *imp_sth;
 {
+    D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
     CS_INT      restype;
     CS_RETCODE  retcode;
@@ -1836,6 +1857,31 @@ st_next_result(sth, imp_sth)
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "ct_execute() final retcode = %d\n", retcode);
   Done:
+
+    /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
+       does NOT return CS_CMD_FAIL for constraint errors when
+       inserting/updating data using ?-style placeholders. */
+
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    st_next_result() -> lasterr = %d, lastsev = %d\n", imp_dbh->lasterr, imp_dbh->lastsev);
+
+    /* Only force a failure if there are no rows to be fetched (ie on a
+       normal insert/update/delete operation */
+    if(imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10) {
+	if(restype != CS_STATUS_RESULT &&
+	   restype != CS_ROW_RESULT    &&
+	   restype != CS_PARAM_RESULT  &&
+	   restype != CS_CURSOR_RESULT &&
+	   restype != CS_COMPUTE_RESULT ) {
+	    failFlag = 1;
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    st_next_result() -> restype is not data result, force failFlag\n");
+	} else {
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    st_next_result() -> restype is data result, do NOT force failFlag\n");
+	}
+    }
+
     if(failFlag || retcode == CS_FAIL)
 	return CS_CMD_FAIL;
 
@@ -1895,15 +1941,7 @@ syb_st_execute(sth, imp_sth)
 	DBIc_ACTIVE_on(imp_sth);
     }
 
-    /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
-       does NOT return CS_CMD_FAIL for constraint errors when inserting/updating
-       data using ?-style placeholders. */
-
-	if(dbis->debug >= 2)
-	    fprintf(DBILOGFP, "    syb_st_execute() -> lasterr = %d, lastsev = %d\n", imp_dbh->lasterr, imp_dbh->lastsev);
-
-       
-    if(restype == CS_CMD_FAIL || (imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10))
+    if(restype == CS_CMD_FAIL)
 	return -2;
 
 

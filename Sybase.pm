@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.22 2000/03/24 04:44:49 mpeppler Exp $
+# $Id: Sybase.pm,v 1.23 2000/09/01 18:28:03 mpeppler Exp $
 
-# Copyright (c) 1996,1997,1998,1999   Michael Peppler
+# Copyright (c) 1996,1997,1998,1999,2000   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file,
@@ -22,8 +22,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.22';
-    my $Revision = substr(q$Revision: 1.22 $, 10);
+    $VERSION = '0.23';
+    my $Revision = substr(q$Revision: 1.23 $, 10);
 
     require_version DBI 1.02;
 

@@ -1,4 +1,14 @@
-$Id: CHANGES,v 1.20 2000/03/24 04:45:21 mpeppler Exp $
+$Id: CHANGES,v 1.21 2000/09/01 18:35:40 mpeppler Exp $
+
+Release 0.23
+
+	Bug Fixes:
+
+	331: ? marks in comments are parsed as placeholders.
+	343: Errors in stored procs cause data rows from proc to be
+	     thrown away.
+	255: $dbh->execute does not fail it executing proc without
+	     permissions.
 
 Release 0.22
 

@@ -1,4 +1,4 @@
-$Id: README,v 1.13 2000/03/24 04:45:10 mpeppler Exp $
+$Id: README,v 1.14 2000/09/01 18:35:36 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -32,6 +32,16 @@ man page for details.
 
 Recent changes:
 
+Release 0.23
+
+	Bug Fixes:
+
+	331: ? marks in comments are parsed as placeholders.
+	343: Errors in stored procs cause data rows from proc to be
+	     thrown away.
+	255: $dbh->execute does not fail it executing proc without
+	     permissions.
+
 Release 0.22
 
 	Bug Fixes:
@@ -43,51 +53,6 @@ Release 0.22
 	295: SEGV due to printf w/ null pointer
 	299: Missing dTHR in syb_st_prepare().
 
-
-Release 0.21
-
-	Added constant() function, so that if DBD::Sybase is use'd you 
-	can access some CS_xxx_RESULT constants.
-	Added $sth->func('syb_output_params') to allow for easier
-	retrieval of stored proc OUTPUT parameters.
-	Added syb_do_proc_status database attribute to allow $sth->execute
-	to handle stored procedure return status directly, and to fail if
-	the stored proc has a non-0 return status. This should also fix 
-	bug 255.
-	Errors with severity 10 or below are not stored in $DBI::err 
-	anymore. Use $dbh->{syb_err_handler} to get at those warning
-	messages.
-	Added t/fail.t test script to better test failure modes.
-	Setting AutoCommit on a $dbh with active statement handles is now 
-	a fatal error.
-
-	Bug Fixes:
-
-	255: Memory leak for prepared statements that are not executed.
-	264: make test fails when building DBD::Sybase against
-	     OpenClient 10.x.
-	266: make test fails when building DBD::Sybase with perl 5.004_04
-	     or earlier.
-	268: $sth->execute(x,y,z) (ie executing a prepare'd statment that
-	     has ?-style placeholders) does not return undef if a
-	     constraint violation occurs on the insert/update/delete.
-
-
-Release 0.20
-
-	Fix code to allow prepare, execute, execute, execute... on 
-	statements that don't include ?-style placeholders.
-	Fix LENGTH/PRECISION/SCALE $sth attributes to be closer to the
-	DBI spec.
-	Fix core dump problem when binding undef values and having 
-	trace >= 2.
-	Add syb_quoted_identifier connection/database handle attribute.
-	Add syb_oc_version read-only database handle attribute, returns the 
-	Sybase library version that this binary is currently using.
-	Added the syb_rowcount $dbh attribute.
-	Added $sth->cancel().
-	Call the syb_err_handler (if one is defined) for client-side
-	errors.
 
 
 
@@ -154,6 +119,8 @@ installed perl library tree.
 Known Problems:
 ===============
 
+Solaris 2.x:
+-----------
 On Solaris 2.x make test will fail if LD_LIBRARY_PATH is set and has
 /usr/lib or /lib before $SYBASE/lib. This is because both Solaris 2.x
 and Sybase have a library called libintl.so, and if /usr/lib is placed 
@@ -163,9 +130,19 @@ necessary to set LD_LIBRARY_PATH on Solaris, and it is only rarely
 necessary to include /usr/lib or /lib in the LD_LIBRARY_PATH as those
 directories will be searched by default.
 
+Linux:
+------
+If the LANG or LC_ALL environment variable is set and points to an 
+entry that does not exist in $SYBASE/locales/locales.dat (in the 
+[linux] section) then you will get a core dump. This is an
+OpenClient problem. 
+See http://www.mbay.net/~mpeppler/Linux-ASE-FAQ.html#q1.14 for
+additional details.
 
-The regression tests are minimal at the moment so don't necessarily
-believe all is fine if the tests succeed...
+
+The regression tests cover the normal operations, but they are by no 
+means complete, so don't necessarily believe all is fine if the
+tests succeed...
 
 NOTE: t/fail.t will *fail* on test #8 if you are connecting to 
       an 11.0.3.3 server. This is a bug in the server, and not something
