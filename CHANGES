@@ -1,6 +1,35 @@
-$Id: CHANGES,v 1.6 1998/05/20 22:39:12 mpeppler Exp $
+$Id: CHANGES,v 1.7 1998/10/07 23:59:13 mpeppler Exp $
 
-Release 0.07
+Release 0.09
+
+	Features:
+
+	Added $sth->{syb_result_type} which returns the numerical
+	value of the current result set. The values are defined
+	in $SYBASE/include/cspublic.h.
+	Made $sth->{TYPE} compatible with generic DBI values, and
+	added $sth->{syb_types} to get the native Sybase types.
+	Added $dbh->tables and $dbh->table_info.
+
+	Finally got rid of the "Use of uninitialized value" message 
+	in connect() (thanks to Tom May for this)
+
+	Fixed at least some of the memory leaks (thanks to Bryan Mawhinney)
+
+	Added Sybase specific do() sub that will handle multiple result
+	sets.
+
+	Added $dbh->{syb_show_sql} and $dbh->{syb_show_eed} to add more
+	control to error reporting.
+
+	Implemented $dbh->ping() method (first cut - may need improvement!)
+
+	Bug Fixes:
+
+	244: fetch gets infinite loop on sproc error
+	246: extended error messages go to STDOUT.
+
+Release 0.08
 
 	Features:
 

@@ -1,4 +1,4 @@
-# $Id: CONFIG,v 1.4 1998/04/06 15:41:56 mpeppler Exp $
+# $Id: CONFIG,v 1.5 1998/10/07 23:59:32 mpeppler Exp $
 # Configuration file for Sybperl
 #
 # Where is the Sybase directory on your system (include files &
@@ -9,7 +9,7 @@ SYBASE=/opt/sybase
 # Some systems require -lnsl or -lBSD.
 # Solaris 2.x needs -ltli
 # SGI IRIX needs -linsck (and may need need -ltli)
-# DEC OSF/1 needs -ldnet_stub and may need -lsdna
+# DEC OSF/1 needs -ldnet_stub and may need -lsdna and -linsck or -ltli
 # SunOS 4.x needs -linsck
 # HP-UX 10.x needs -linsck
 # AIX 3.2.5 needs -linsck

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.7 1998/05/20 22:37:53 mpeppler Exp $
+# $Id: Sybase.pm,v 1.9 1998/10/08 00:01:30 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.08';
-    my $Revision = substr(q$Revision: 1.7 $, 10);
+    $VERSION = '0.09';
+    my $Revision = substr(q$Revision: 1.9 $, 10);
 
     require_version DBI 0.89;
 
@@ -89,6 +89,65 @@
 	    or return undef;
 
 	$sth;
+    }
+
+    sub tables {
+	my $dbh = shift;
+
+	my $sth = $dbh->prepare("select name from sysobjects where type in ('V', 'U')");
+	$sth->execute;
+	my @names;
+	my $dat;
+	while($dat = $sth->fetch) {
+	    push(@names, $dat->[0]);
+	}
+	@names;
+    }
+
+    sub do {
+	my($dbh, $statement, $attr, @params) = @_;
+	my $sth = $dbh->prepare($statement, $attr) or return undef;
+	$sth->execute(@params) or return undef;
+	my $rows = $sth->rows;
+#	print STDERR "$rows $sth->{syb_more_results}\n";
+	if(defined($sth->{syb_more_results})) {
+	    do {
+		while(my $dat = $sth->fetch) {
+		    # do something intelligent here...
+		}
+	    } while($sth->{syb_more_results});
+	}
+
+	($rows == 0) ? "0E0" : $rows;
+    }
+
+    sub table_info {
+	my $dbh = shift;
+
+	my $sth = $dbh->prepare("
+           select TABLE_QUALIFIER = NULL
+                , TABLE_OWNER     = u.name
+                , TABLE_NAME      = o.name
+                , TABLE_TYPE      = o.type  -- XXX
+                , REMARKS         = NULL
+             from sysobjects o
+                , sysusers   u
+            where o.type in ('U', 'V', 'S')
+              and o.uid = u.uid");
+
+	$sth->execute;
+	$sth;
+    }
+
+    sub ping {
+	my $dbh = shift;
+	my $sth = $dbh->prepare("select * from sysusers where 1=2");
+	
+	if($sth->execute < 0) {
+	    return 0 if(DBD::Sybase::db::_isdead($dbh));
+	}
+	$sth->finish;
+	return 1;
     }
 }
 
@@ -191,6 +250,17 @@ Specify the location of an alternate I<interfaces> file:
      $dbh = DBI->connect("dbi:Sybase:interfaces=/usr/local/sybase/interfaces",
 			 $user, $passwd);
 
+=item loginTimeout
+
+Specify the number of seconds that DBI->connect() will wait for a 
+response from the Sybase server. If the server fails to respond before the
+specified number of seconds the DBI->connect() call fails with a timeout
+error. The default value is 60 seconds, which is usually enough, but on a busy
+server it is sometimes necessary to increase this value:
+
+     $dbh = DBI->connect("dbi:Sybase:loginTimeout=240", # wait up to 4 minutes
+			 $user, $passwd);
+
 =back
 
 These different parameters (as well as the server name) can be strung
@@ -235,9 +305,86 @@ written like this:
      } while($sth->{syb_more_results});
      $sth->finish;
 
+You can get the type of the current result set with 
+$sth->{syb_result_type}. This returns a numerical value, as defined in 
+$SYBASE/include/cspublic.h:
+
+	#define CS_ROW_RESULT		(CS_INT)4040
+	#define CS_CURSOR_RESULT	(CS_INT)4041
+	#define CS_PARAM_RESULT		(CS_INT)4042
+	#define CS_STATUS_RESULT	(CS_INT)4043
+	#define CS_MSG_RESULT		(CS_INT)4044
+	#define CS_COMPUTE_RESULT	(CS_INT)4045
+
+In particular, the return status of a stored procedure is returned
+as CS_STATUS_RESULT (4043), and is normally the last result set that is 
+returned in a stored proc execution.
+
 This should be compatible with other DBI drivers.
 
-=head2 Transactions and Transact-SQL
+=head1 Sybase Specific Attributes
+
+There are a number of handle  attributes that are specific to this driver.
+These attributes all start with B<syb_> so as to not clash with any
+normal DBI attributes.
+
+=head2 Database Handle Attributes
+
+The following Sybase specific attributes can be set at the Database handle
+level:
+
+=over 4
+
+=item syb_show_sql
+
+If set then the current statement is included in the string returned by 
+$dbh->errstr.
+
+=item syb_show_eed
+
+If set, then extended error information is included in the string returned 
+by $dbh->errstr. Extended error information include the index causing a
+duplicate insert to fail, for example.
+
+=back
+
+=head2 Statement Handle Attributes
+
+The following read-only attributes are available at the statement level:
+
+=over 4
+
+=item syb_more_results
+
+See the discussion on handling multiple result sets above.
+
+=item syb_result_type
+
+Returns the numeric result type of the current result set. Useful when 
+executing stored procedurs to determine what type of information is
+currently fetchable (normal select rows, output parameters, status results,\
+etc...).
+
+=back
+
+=head1 IMAGE and TEXT datatypes
+
+DBD::Sybase uses the standard OpenClient conversion routines to convert
+data retrieved from the server into either string or numeric format.
+
+The conversion routines convert IMAGE datatypes to a hexadecimal string.
+If you need the binary representation you can use something like
+
+    $binary = pack("H*", $hex_string);
+
+to do the conversion. Note that TEXT columns are not treated this way
+and will be returned exactly as they were stored. Internally Sybase
+makes no distinction between TEXT and IMAGE columns - both can be
+used to store either text or binary data.
+
+
+
+=head1 Transactions and Transact-SQL
 
 When $h->{AutoCommit} is I<off> (ie I<0>) the DBD::Sybase driver
 will send a B<BEGIN TRAN> before the first $dbh->prepare(), and
@@ -299,6 +446,9 @@ at http://sybooks.sybase.com/dynaweb.
 Setting $dbh->{LongReadLen} has no effect. Use $dbh->do("set textsize xxxx")
 instead.
 
+You can't set a particular database via the connect() call. Use
+$dbh->do("use $database") instead.
+
 
 =head1 SEE ALSO
 
@@ -320,7 +470,7 @@ without the prior approval of the author.
 
 =head1 ACKNOWLEDGEMENTS
 
-Tim Bunce for DBI, obviously.
+Tim Bunce for DBI, obviously!
 
 See also L<DBI/ACKNOWLEDGEMENTS>.
 

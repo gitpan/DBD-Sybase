@@ -1,6 +1,6 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.2 1997/09/26 21:28:18 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.3 1998/10/08 00:01:48 mpeppler Exp $
    Copyright (c) 1997 Michael Peppler
 
    Uses from Driver.xst
@@ -17,6 +17,14 @@
 
 DBISTATE_DECLARE;
 
+MODULE = DBD::Sybase    PACKAGE = DBD::Sybase::db
+
+void
+_isdead(dbh)
+    SV *	dbh
+    CODE:
+    D_imp_dbh(dbh);
+    ST(0) = sv_2mortal(newSViv(imp_dbh->isDead));
 
 MODULE = DBD::Sybase	PACKAGE = DBD::Sybase
 

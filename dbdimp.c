@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.7 1998/05/20 22:38:34 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.8 1998/10/08 00:02:10 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -13,19 +13,29 @@
 
 #include "Sybase.h"
 
+/* Defines needed for perl 5.005 / threading */
+
+#if defined(op)
+#undef op
+#endif
+#if !defined(dTHR)
+#define dTHR	extern int errno
+#endif
+
+
 DBISTATE_DECLARE;
 
 static void cleanUp _((imp_sth_t *));
 static char *GetAggOp _((CS_INT));
 static CS_INT display_dlen _((CS_DATAFMT *));
-static CS_RETCODE display_header _((CS_INT, CS_DATAFMT*));
+static CS_RETCODE display_header _((imp_dbh_t *, CS_INT, CS_DATAFMT*));
 static CS_RETCODE describe _((imp_sth_t *, int));
-static CS_RETCODE fetch_data _((CS_COMMAND*));
+static CS_RETCODE fetch_data _((imp_dbh_t *, CS_COMMAND*));
 static CS_RETCODE clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
 static CS_RETCODE servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
-static CS_RETCODE notification_cb _((CS_CONNECTION*, CS_CHAR*, CS_INT));
 static CS_COMMAND *syb_alloc_cmd _((CS_CONNECTION*));
 static void dealloc_dynamic _((imp_sth_t *));
+static int map_types(int syb_type);
 
 
 static CS_CONTEXT *context;
@@ -44,12 +54,15 @@ CS_CLIENTMSG	*errmsg;
 
     if((ct_con_props(connection, CS_GET, CS_USERDATA,
 		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
-	croak("Panic: servermsg_cb: Can't find handle from connection");
+	croak("Panic: clientmsg_cb: Can't find handle from connection");
     
     sv_setiv(DBIc_ERR(imp_dbh), (IV)CS_NUMBER(errmsg->msgnumber));
     
-    sv_catpv(DBIc_ERRSTR(imp_dbh), "Open Client Message:\n");
-    sprintf(buff, "Message number: LAYER = (%ld) ORIGIN = (%ld) ",
+    if(SvOK(DBIc_ERRSTR(imp_dbh))) 
+	sv_catpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
+    else
+	sv_setpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
+    sprintf(buff, "LAYER = (%ld) ORIGIN = (%ld) ",
 	    CS_LAYER(errmsg->msgnumber), CS_ORIGIN(errmsg->msgnumber));
     sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
     sprintf(buff, "SEVERITY = (%ld) NUMBER = (%ld)\n",
@@ -61,6 +74,10 @@ CS_CLIENTMSG	*errmsg;
 	    sprintf(buff, "Operating System Error: %s\n",
 		    errmsg->osstring);
 	    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+    }
+
+    if(CS_NUMBER(errmsg->msgnumber) == 6) { /* disconnect */
+	imp_dbh->isDead = 1;
     }
     return CS_SUCCEED;
 }
@@ -74,7 +91,7 @@ CS_SERVERMSG	*srvmsg;
     CS_COMMAND	*cmd;
     CS_RETCODE	retcode;
     imp_dbh_t *imp_dbh = NULL;
-    char buff[255];
+    char buff[1024];
 
     if(srvmsg->msgnumber == 5701)
 	return CS_SUCCEED;
@@ -85,8 +102,11 @@ CS_SERVERMSG	*srvmsg;
     
     if(imp_dbh && srvmsg->msgnumber) {
 	sv_setiv(DBIc_ERR(imp_dbh), (IV)srvmsg->msgnumber);
-	
-	sv_catpv(DBIc_ERRSTR(imp_dbh), "Server message ");
+
+	if(SvOK(DBIc_ERRSTR(imp_dbh))) 
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), "Server message ");
+	else
+	    sv_setpv(DBIc_ERRSTR(imp_dbh), "Server message ");
 	sprintf(buff, "number=%ld severity=%ld ",
 		srvmsg->msgnumber, srvmsg->severity);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
@@ -104,20 +124,23 @@ CS_SERVERMSG	*srvmsg;
 	
 	sprintf(buff, "text=%s", srvmsg->text);
 	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-	if (srvmsg->status & CS_HASEED)	{
-	    fprintf(DBILOGFP, "\n[Start Extended Error]\n");
+	if(imp_dbh->showSql) {
+	    sprintf(buff, "Statement=%s\n", imp_dbh->sql);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+	}
+	if (imp_dbh->showEed && srvmsg->status & CS_HASEED) {
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n[Start Extended Error]\n");
 	    if (ct_con_props(connection, CS_GET, CS_EED_CMD,
 			     &cmd, CS_UNUSED, NULL) != CS_SUCCEED)
 	    {
 		warn("servermsg_cb: ct_con_props(CS_EED_CMD) failed");
 		return CS_FAIL;
 	    }
-	    retcode = fetch_data(cmd);
-	    fprintf(DBILOGFP, "\n[End Extended Error]\n\n");
+	    retcode = fetch_data(imp_dbh, cmd);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n[End Extended Error]\n");
 	}
 	else
 	    retcode = CS_SUCCEED;
-	fflush(DBILOGFP);
 	
 	return retcode;
     } else {
@@ -133,8 +156,9 @@ CS_SERVERMSG	*srvmsg;
 		fprintf(DBILOGFP, "procedure=%s ", srvmsg->proc);
 	    }
 	    fprintf(DBILOGFP, "text=%s\n", srvmsg->text);
-	} else
+	} else {
 	    fprintf(DBILOGFP, "%s\n", srvmsg->text);
+	}
 
 	fflush(DBILOGFP);
     }
@@ -142,31 +166,6 @@ CS_SERVERMSG	*srvmsg;
     return CS_SUCCEED;
 }
 
-static CS_RETCODE
-notification_cb(connection, procname, pnamelen)
-CS_CONNECTION	*connection;
-CS_CHAR		*procname;
-CS_INT		pnamelen;
-{
-    CS_RETCODE	retcode;
-    CS_COMMAND	*cmd;
-
-    fprintf(DBILOGFP,
-	    "\n-- Notification received --\nprocedure name = '%s'\n\n",
-	    procname);
-    fflush(DBILOGFP);
-    
-    if (ct_con_props(connection, CS_GET, CS_EED_CMD,
-		     &cmd, CS_UNUSED, NULL) != CS_SUCCEED)
-    {
-	warn("notification_cb: ct_con_props(CS_EED_CMD) failed");
-	return CS_FAIL;
-    }
-    retcode = fetch_data(cmd);
-    fprintf(DBILOGFP, "\n[End Notification]\n\n");
-    
-    return retcode;
-}
 
 static CS_CHAR * 
 GetAggOp(op)
@@ -259,12 +258,9 @@ CS_DATAFMT *column;
     return MAX(strlen(column->name) + 1, len);
 }
 
-/* FIXME:
-   All of the output in this function goes to stdout. The function is
-   called from fetch_data (which is called from servermsg_cb), which
-   normally outputs it's messages to stderr... */
 static CS_RETCODE
-display_header(numcols, columns)
+display_header(imp_dbh, numcols, columns)
+imp_dbh_t      *imp_dbh;
 CS_INT		numcols;
 CS_DATAFMT	columns[];
 {
@@ -273,32 +269,29 @@ CS_DATAFMT	columns[];
     CS_INT		j;
     CS_INT		disp_len;
 
-    fputc('\n', DBILOGFP);
+    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
     for (i = 0; i < numcols; i++)
     {
 	disp_len = display_dlen(&columns[i]);
-	fprintf(DBILOGFP, "%s", columns[i].name);
-	fflush(DBILOGFP);
+	sv_catpv(DBIc_ERRSTR(imp_dbh), columns[i].name);
 	l = disp_len - strlen(columns[i].name);
 	for (j = 0; j < l; j++)
 	{
-	    fputc(' ', DBILOGFP);
-	    fflush(DBILOGFP);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), " ");
 	}
     }
-    fputc('\n', DBILOGFP);
-    fflush(DBILOGFP);
+    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
     for (i = 0; i < numcols; i++)
     {
 	disp_len = display_dlen(&columns[i]);
 	l = disp_len - 1;
 	for (j = 0; j < l; j++)
 	{
-	    fputc('-', DBILOGFP);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), "-");
 	}
-	fputc(' ', DBILOGFP);
+	sv_catpv(DBIc_ERRSTR(imp_dbh), " ");
     }
-    fputc('\n', DBILOGFP);
+    sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
     
     return CS_SUCCEED;
 }
@@ -329,10 +322,6 @@ void syb_init(dbistate)
     if((retcode = ct_callback(context, NULL, CS_SET, CS_SERVERMSG_CB,
 			      (CS_VOID *)servermsg_cb)) != CS_SUCCEED)
 	croak("DBD::Sybase initialize: ct_callback(servermsg) failed");
-
-    if((retcode = ct_callback(context, NULL, CS_SET, CS_NOTIF_CB,
-			      (CS_VOID *)notification_cb)) != CS_SUCCEED)
-	croak("DBD::Sybase initialize: ct_callback(notification) failed");
 
     if((retcode = ct_config(context, CS_SET, CS_NETIO, &netio_type, 
 			    CS_UNUSED, NULL)) != CS_SUCCEED)
@@ -378,6 +367,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     char       *uid;
     char       *pwd;
 {
+    dTHR;
     CS_RETCODE     retcode;
     CS_CONNECTION *connection = NULL;
     CS_COMMAND    *cmd;
@@ -389,6 +379,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     char language[64];
     char ifile[255];
     char ofile[255];
+    char loginTimeout[64];
 
     server[0]     = 0;
     charset[0]    = 0;
@@ -402,9 +393,12 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	extractFromDsn("packetSize=", dsn, packetSize, 64);
 	extractFromDsn("language=", dsn, language, 64);
 	extractFromDsn("interfaces=", dsn, ifile, 255);
+	extractFromDsn("loginTimeout=", dsn, loginTimeout, 64);
     } else {
 	strcpy(server, dsn);
     }
+
+    sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
     if(ifile[0]) {
 	if(dbis->debug >= 2)
@@ -421,6 +415,17 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	    }
 	}
     }
+    if(loginTimeout[0]) {
+	int timeout = atoi(loginTimeout);
+	if(timeout <= 0)
+	    timeout = 60;	/* set negative or 0 length timeout to default 60 seconds */
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_LOGIN_TIMEOUT,%d)\n", timeout);
+	if((retcode = ct_config(context, CS_SET, CS_LOGIN_TIMEOUT, &timeout,
+				CS_UNUSED, NULL)) != CS_SUCCEED)
+	    warn("ct_config(CS_SET, CS_LOGIN_TIMEOUT) failed");
+    }
+	
 
     /* Set up the proper locale - to handle character sets, etc. */
     if ((retcode = cs_loc_alloc( context, &locale ) != CS_SUCCEED)) {
@@ -513,6 +518,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     {
 	len = (server == NULL || !*server) ? 0 : CS_NULLTERM;
 	if((retcode = ct_connect(connection, server, len)) != CS_SUCCEED) {
+	    cs_loc_drop(context, locale);
 	    return 0;
 	}
     }
@@ -686,17 +692,20 @@ int      syb_db_disconnect(dbh, imp_dbh)
     SV *dbh;
     imp_dbh_t *imp_dbh;
 {
+    dTHR;
     CS_RETCODE retcode;
 
     /* rollback if we get disconnected and no explicit commit
        has been called (when in non-AutoCommit mode) */
-    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->inTransaction)
-	syb_db_rollback(dbh, imp_dbh);
+    if(imp_dbh->isDead == 0) { /* only call if connection still active */
+	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->inTransaction)
+	    syb_db_rollback(dbh, imp_dbh);
 
-    if(dbis->debug >= 2)
-	fprintf(DBILOGFP, "    syb_db_disconnect() -> ct_close()\n");
-    if((retcode = ct_close(imp_dbh->connection, CS_FORCE_CLOSE)) != CS_SUCCEED)
-	fprintf(DBILOGFP, "    syb_db_disconnect(): ct_close() failed\n");
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_disconnect() -> ct_close()\n");
+	if((retcode = ct_close(imp_dbh->connection, CS_FORCE_CLOSE)) != CS_SUCCEED)
+	    fprintf(DBILOGFP, "    syb_db_disconnect(): ct_close() failed\n");
+    }
     if((retcode = ct_con_drop(imp_dbh->connection)) != CS_SUCCEED)
 	fprintf(DBILOGFP, "    syb_db_disconnect(): ct_con_drop() failed\n");
 
@@ -739,6 +748,24 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, SvTRUE(valuesv));
 	return TRUE;
     }
+    if (kl == 12 && strEQ(key, "syb_show_sql")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->showSql = 1;
+	} else {
+	    imp_dbh->showSql = 0;
+	}
+	return TRUE;
+    }
+    if (kl == 12 && strEQ(key, "syb_show_eed")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->showEed = 1;
+	} else {
+	    imp_dbh->showEed = 0;
+	}
+	return TRUE;
+    }
     return FALSE;
 }
 
@@ -755,6 +782,24 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 
     if (kl == 10 && strEQ(key, "AutoCommit")) {
 	if(DBIc_is(imp_dbh, DBIcf_AutoCommit)) 
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if (kl == 12 && strEQ(key, "syb_show_sql")) {
+	if(imp_dbh->showSql) 
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if (kl == 12 && strEQ(key, "syb_show_eed")) {
+	if(imp_dbh->showEed) 
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if (kl == 8 && strEQ(key, "syb_dead")) {
+	if(imp_dbh->isDead)
 	    retsv = newSViv(1);
 	else
 	    retsv = newSViv(0);
@@ -864,6 +909,12 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    return 0;
 
     imp_sth->cmd = syb_alloc_cmd(imp_dbh->connection);
+
+    strncpy(imp_dbh->sql, statement, MAX_SQL_SIZE);
+    imp_dbh->sql[MAX_SQL_SIZE - 1] = '\0';
+    imp_dbh->sql[MAX_SQL_SIZE - 2] = '.';
+    imp_dbh->sql[MAX_SQL_SIZE - 3] = '.';
+    imp_dbh->sql[MAX_SQL_SIZE - 4] = '.';
     
     dbd_preparse(imp_sth, statement);
 	
@@ -871,8 +922,14 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	CS_INT restype;
 	int tt = rand(); 
 	int failed = 0;
+	CS_BOOL val;
 
-	sprintf(imp_sth->dyn_id, "idXXX%x", (int)tt);
+	ret = ct_capability(imp_dbh->connection, CS_GET, CS_CAP_REQUEST,
+			    CS_REQ_DYN, (CS_VOID*)&val);
+	if(ret != CS_SUCCEED || val == CS_FALSE)
+	    croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
+
+	sprintf(imp_sth->dyn_id, "DBD%x", (int)tt);
 
 	if (dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
@@ -927,6 +984,9 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	ret = ct_command(imp_sth->cmd, CS_LANG_CMD, statement,
 			 CS_NULLTERM, CS_UNUSED);
     }
+
+    if(imp_sth->statement != NULL)
+	safefree(imp_sth->statement);
 
     if(ret != CS_SUCCEED) 
 	return 0;
@@ -1171,6 +1231,7 @@ int      syb_st_execute(sth, imp_sth)
     SV *sth;
     imp_sth_t *imp_sth;
 {
+    dTHR;
     CS_COMMAND *cmd = imp_sth->cmd;
     int restype;
 
@@ -1201,6 +1262,7 @@ syb_st_fetch(sth, imp_sth)
     SV *sth;
     imp_sth_t *imp_sth;
 {
+    dTHR;
     D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
     int debug = DBIS->debug;
@@ -1282,8 +1344,11 @@ syb_st_fetch(sth, imp_sth)
       case CS_FAIL:		/* ohmygod */
 	/* FIXME: Should we call ct_cancel() here, or should we let
 	   the programmer handle it? */
-	if(ct_cancel(imp_dbh->connection, NULL, CS_CANCEL_ALL) == CS_FAIL)
-	    croak("ct_cancel() failed - dying");
+	  if(ct_cancel(imp_dbh->connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
+	      ct_close(imp_dbh->connection, CS_FORCE_CLOSE);
+	      imp_dbh->isDead = 1;
+	  }
+	  return Nullav;
 	break;
       case CS_END_DATA:		/* we've seen all the data for this result
 				   set. So see if this is the end of the
@@ -1294,7 +1359,7 @@ syb_st_fetch(sth, imp_sth)
 	      fprintf(DBILOGFP, "    syb_st_fetch() -> st_next_results() == %d\n",
 		      restype);
 
-	  if(restype == CS_CMD_DONE) {
+	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
 	      imp_sth->moreResults = 0;
 	      imp_sth->dyn_execed = 0;
 	      DBIc_ACTIVE_off(imp_sth);
@@ -1318,11 +1383,14 @@ int      syb_st_finish(sth, imp_sth)
     SV *sth;
     imp_sth_t *imp_sth;
 {
+    dTHR;
     D_imp_dbh_from_sth;
 
     if (DBIc_ACTIVE(imp_sth)) {
-	if(ct_cancel(imp_dbh->connection, NULL, CS_CANCEL_ALL) == CS_FAIL)
-	    croak("ct_cancel() failed - dying");
+	if(ct_cancel(imp_dbh->connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
+	      ct_close(imp_dbh->connection, CS_FORCE_CLOSE);
+	      imp_dbh->isDead = 1;
+	}	    
     }
     DBIc_ACTIVE_off(imp_sth);
     return 1;
@@ -1347,6 +1415,31 @@ static void dealloc_dynamic(imp_sth)
 	return;
     while(ct_results(imp_sth->cmd, &restype) == CS_SUCCEED)
 	;
+
+    /* clean up added by Bryan Mawhinney */
+    if(imp_sth->statement)
+	 Safefree(imp_sth->statement);
+    if (imp_sth->all_params_hv) {
+	HV *hv = imp_sth->all_params_hv;
+	SV *sv;
+	char *key;
+	I32 retlen;
+	hv_iterinit(hv);
+	while( (sv = hv_iternextsv(hv, &key, &retlen)) != NULL ) {
+	    if (sv != &sv_undef) {
+		phs_t *phs_tpl = (phs_t*)(void*)SvPVX(sv);
+		sv_free(phs_tpl->sv);
+	    }
+	}
+	sv_free((SV*)imp_sth->all_params_hv);
+    }
+ 
+    if (imp_sth->out_params_av)
+	sv_free((SV*)imp_sth->out_params_av);
+    
+    imp_sth->statement = NULL;
+    imp_sth->all_params_hv = NULL;
+    imp_sth->out_params_av = NULL;
 }
 
 void     syb_st_destroy(sth, imp_sth) 
@@ -1360,7 +1453,7 @@ void     syb_st_destroy(sth, imp_sth)
 	fprintf(DBILOGFP, "    syb_st_destroy: called...\n");
 
     if (DBIc_ACTIVE(imp_dbh))
-	if(!strncmp(imp_sth->dyn_id, "idXXX", 5)) {
+	if(!strncmp(imp_sth->dyn_id, "DBD", 3)) {
 	    dealloc_dynamic(imp_sth);
 	}
 
@@ -1409,6 +1502,8 @@ static T_st_params S_st_fetch_params[] =
     s_A("SCALE"),		/* 6 */
     s_A("syb_more_results"),	/* 7 */
     s_A("LENGTH"),		/* 8 */
+    s_A("syb_types"),		/* 9 */
+    s_A("syb_result_type"),	/* 10 */
     s_A(""),			/* END */
 };
 
@@ -1474,7 +1569,7 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	    av = newAV();
 	    retsv = newRV(sv_2mortal((SV*)av));
 	    while(--i >= 0) 
-		av_store(av, i, newSViv(imp_sth->datafmt[i].datatype));
+		av_store(av, i, newSViv(map_types(imp_sth->coldata[i].realType)));
 	    break;
         case 5:			/* PRECISION */
 	    av = newAV();
@@ -1497,7 +1592,16 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	    while(--i >= 0)
 		av_store(av, i, newSViv(imp_sth->datafmt[i].maxlength));
 	    break;
-	case 9:
+	case 9:			/* syb_types: native datatypes */
+	    av = newAV();
+	    retsv = newRV(sv_2mortal((SV*)av));
+	    while(--i >= 0) 
+		av_store(av, i, newSViv(imp_sth->coldata[i].realType));
+	    break;
+	case 10:
+	    retsv = newSViv(imp_sth->lastResType);
+	    break;
+	case 11:
 	    retsv = newSViv(DBIc_LongReadLen(imp_sth));
 	    break;
 	default:
@@ -1682,7 +1786,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 
     if (phs->sv == &sv_undef) { /* first bind for this placeholder      */
         phs->ftype    = CS_CHAR_TYPE;
-//	phs->sql_type = (sql_type) ? sql_type : CS_CHAR_TYPE;
+/*	phs->sql_type = (sql_type) ? sql_type : CS_CHAR_TYPE;           */
         phs->maxlen   = maxlen;         /* 0 if not inout               */
         phs->is_inout = is_inout;
         if (is_inout) {
@@ -1715,13 +1819,10 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     return _dbd_rebind_ph(sth, imp_sth, phs);
 }
 
-/* FIXME:
-   All of the output in this function goes to stdout. The function is
-   called from servermsg_cb, which normally outputs it's messages
-   to stderr... */
 
 static CS_RETCODE
-fetch_data(cmd)
+fetch_data(imp_dbh, cmd)
+imp_dbh_t       *imp_dbh;
 CS_COMMAND	*cmd;
 {
     CS_RETCODE	retcode;
@@ -1733,6 +1834,8 @@ CS_COMMAND	*cmd;
     CS_INT	disp_len;
     CS_DATAFMT	*datafmt;
     ColData	*coldata;
+
+    char buff[1024];
 
     /*
      ** Find out how many columns there are in this result set.
@@ -1787,7 +1890,7 @@ CS_COMMAND	*cmd;
 	return retcode;
     }
 
-    display_header(num_cols, datafmt);
+    display_header(imp_dbh, num_cols, datafmt);
 
     while (((retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED,
 				&rows_read)) == CS_SUCCEED)
@@ -1800,8 +1903,8 @@ CS_COMMAND	*cmd;
 		*/
 	if (retcode == CS_ROW_FAIL)
 	{
-	    fprintf(DBILOGFP, "Error on row %ld.\n", row_count);
-	    fflush(DBILOGFP);
+	    sprintf(buff, "Error on row %ld.\n", row_count);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
 	}
 
 	/*
@@ -1813,8 +1916,7 @@ CS_COMMAND	*cmd;
 	    /*
 	     ** Display the column value
 	     */
-	    fprintf(DBILOGFP, "%s", coldata[i].value.c);
-	    fflush(DBILOGFP);
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), coldata[i].value.c);
 
 	    /*
 	     ** If not last column, Print out spaces between this
@@ -1826,12 +1928,11 @@ CS_COMMAND	*cmd;
 		disp_len -= coldata[i].valuelen - 1;
 		for (j = 0; j < disp_len; j++)
 		{
-		    fputc(' ', DBILOGFP);
+		    sv_catpv(DBIc_ERRSTR(imp_dbh), " ");
 		}
 	    }
 	} 
-	fprintf(DBILOGFP, "\n");
-	fflush(DBILOGFP);
+	sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
     }
 
     /*
@@ -1867,3 +1968,31 @@ CS_COMMAND	*cmd;
     return retcode;
 }
 
+static int map_types(int syb_type)
+{
+    switch(syb_type) {
+    case CS_CHAR_TYPE:		return SQL_CHAR;
+    case CS_BINARY_TYPE:	return SQL_BINARY;
+    case CS_LONGCHAR_TYPE:	return SQL_CHAR; /* XXX */
+    case CS_LONGBINARY_TYPE:	return SQL_BINARY; /* XXX */
+    case CS_TEXT_TYPE:		return SQL_LONGVARCHAR; /* XXX */
+    case CS_IMAGE_TYPE:		return SQL_LONGVARBINARY; /* XXX */
+    case CS_BIT_TYPE:
+    case CS_TINYINT_TYPE:       return SQL_TINYINT;
+    case CS_SMALLINT_TYPE:      return SQL_SMALLINT;
+    case CS_INT_TYPE:		return SQL_INTEGER;
+    case CS_REAL_TYPE:		return SQL_REAL;
+    case CS_FLOAT_TYPE:		return SQL_FLOAT;
+    case CS_DATETIME_TYPE:
+    case CS_DATETIME4_TYPE:	return SQL_DATE;
+    case CS_MONEY_TYPE:
+    case CS_MONEY4_TYPE:	return SQL_DECIMAL; /* XXX */
+    case CS_NUMERIC_TYPE:	return SQL_NUMERIC;
+    case CS_DECIMAL_TYPE:	return SQL_DECIMAL;
+    case CS_VARCHAR_TYPE:	return SQL_VARCHAR;
+    case CS_VARBINARY_TYPE:	return SQL_VARBINARY;
+
+    default:
+	return SQL_CHAR;
+    }
+}

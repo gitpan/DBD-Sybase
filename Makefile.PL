@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.5 1997/10/31 19:00:40 mpeppler Exp $
+# $Id: Makefile.PL,v 1.6 1998/10/08 00:11:30 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -18,20 +18,28 @@ $LINKTYPE = 'dynamic';
 
 configure();
 
-#$lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $$sattr{EXTRA_LIBS} -lm";
-#$inc_string = "-I$SYBASE/include -I$Config{sitearchexp}/DBI";
+my $lddlflags = $Config{lddlflags};
+$lddlflags = "-L$SYBASE/lib $lddlflags" unless $^O eq 'VMS';
+my $ldflags = $Config{ldflags};
+$ldflags = "-L$SYBASE/lib $ldflags" unless $^O eq 'VMS';
 
 
-WriteMakefile('NAME' => 'DBD::Sybase',
-	      LIBS => [$lib_string],
-	      INC => $inc_string,
-	      clean	=> { FILES=> 'Sybase.xsi' },
-	      OBJECT => '$(O_FILES)',
+WriteMakefile('NAME'         => 'DBD::Sybase',
+	      LIBS           => [$lib_string],
+	      INC            => $inc_string,
+	      clean	     => { FILES=> 'Sybase.xsi' },
+	      OBJECT         => '$(O_FILES)',
 	      'VERSION_FROM' => 'Sybase.pm',
-	      'LDDLFLAGS' => "-L$SYBASE/lib $Config{lddlflags}",
-	      'LDFLAGS' => "-L$SYBASE/lib $Config{ldflags}",
-	      LINKTYPE => $LINKTYPE,
+	      'LDDLFLAGS'    => $lddlflags,
+	      'LDFLAGS'      => $ldflags,
+	      LINKTYPE       => $LINKTYPE,
+	      ($] >= 5.005 ?
+	       (ABSTRACT   => 'DBI driver for Sybase datasources',
+		AUTHOR     => 'Michael Peppler (mpeppler@mbay.net)') : ()),
+	      ($] >= 5.005 && $^O eq 'MSWin32' && 
+	       $Config{archname} =~ /-object\b/i ? (CAPI => 'TRUE') :()),
 	      'dist' => {'TARFLAGS' => 'cvfF', 'COMPRESS' => 'gzip'},
+	      PM     => 'Sybase.pm'
 	      );
 
 sub MY::postamble {
@@ -54,7 +62,11 @@ sub configure {
 
 	$attr{$key} = $val;
     }
-    $SYBASE = $attr{SYBASE} || $ENV{SYBASE};
+    if($attr{SYBASE} && -d $attr{SYBASE}) {
+	$SYBASE = $attr{SYBASE}; 
+    } else {
+	$SYBASE = $ENV{SYBASE};
+    }
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
     }

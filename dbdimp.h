@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.3 1998/05/20 22:39:41 mpeppler Exp $
+   $Id: dbdimp.h,v 1.3 1998/05/20 22:39:41 mpeppler Exp mpeppler $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -41,13 +41,22 @@ struct imp_drh_st {
     dbih_drc_t com;		/* MUST be first element in structure	*/
 };
 
+#define MAX_SQL_SIZE 255
+
 /* Define dbh implementor data structure */
 struct imp_dbh_st {
    dbih_dbc_t com;		/* MUST be first element in structure	*/
 
    CS_CONNECTION *connection;
-   char tranName[32];
-   int inTransaction;   
+   char      tranName[32];
+   int       inTransaction;   
+
+   int       isDead;
+
+   int       showEed;
+   int       showSql;
+   char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
+				   used for error reporting */
 };
 
 typedef struct phs_st {

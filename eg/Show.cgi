@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 
-# $Id: Show.cgi,v 1.2 1997/10/09 00:11:46 mpeppler Exp $
+# $Id: Show.cgi,v 1.3 1998/10/06 18:48:49 mpeppler Exp $
 #
 # Show a Sybase stored proc etc, in HTML.
 # Usage: http://host/cgi-bin/Show.cgi?server=SERVERNAME&database=DATABASE
@@ -44,6 +44,7 @@ SWITCH_STATE: while(1) {
 	$query->param(-name=>'__state__', '-values'=>1);
 	print $query->hidden(-name=>'__state__');
 	print $query->hidden(-name=>'database');
+	print $query->hidden(-name=>'server');
 
 	print $query->submit;
 	print $query->end_form;
