@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.5 1997/11/03 18:10:00 mpeppler Exp $
+# $Id: Sybase.pm,v 1.7 1998/05/20 22:37:53 mpeppler Exp $
 
-# Copyright (c) 1996, 1997   Michael Peppler
+# Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file,
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.06';
-    my $Revision = substr(q$Revision: 1.5 $, 10);
+    $VERSION = '0.08';
+    my $Revision = substr(q$Revision: 1.7 $, 10);
 
     require_version DBI 0.89;
 
@@ -255,18 +255,56 @@ to seriouslys slow down as this causes locks to be set on certain
 system tables, and these locks will be held for the duration of the 
 transaction.
 
+=head1 Using ? Placeholders & bind parameters to $sth->execute
+
+This version supports the use of ? placeholders in SQL statements. It does 
+this by using what Sybase calls I<Dynamic SQL>. The ? placeholders allow
+you to write something like:
+
+	$sth = $dbh->prepare("select * from employee where empno = ?");
+
+        # Retrieve rows from employee where empno == 1024:
+	$sth->execute(1024);
+	while($data = $sth->fetch) {
+	    print "@$data\n";
+	}
+
+       # Now get rows where empno = 2000:
+	
+	$sth->execute(2000);
+	while($data = $sth->fetch) {
+	    print "@$data\n";
+	}
+
+When you use ? placeholders Sybase goes and creates a temporary stored 
+procedure that corresponds to your SQL statement. You then pass variables
+to $sth->execute or $dbh->do, which get inserted in the query, and any rows
+are returned.
+
+For those of you who are used to Transact-SQL there are some limitations
+to using this feature: In particular you can only pass a simple I<exec proc>
+call, or a simple I<select> statement (ie a statement that only returns a
+single result set). In addition, the ? placeholders can only appear in a 
+B<WHERE> clause, in the B<SET> clause of an B<UPDATE> statement, or in the
+B<VALUES> list of an B<INSERT> statement. In particular you can't pass ?
+as a parameter to a stored procedure.
+
+Please see the discussion on Dynamic SQL in the 
+OpenClient C Programmer's Guide for details. The guide is available on-line
+at http://sybooks.sybase.com/dynaweb.
+
 
 =head1 BUGS
 
-Placeholders (ie setting up a query with '?' parameters to be filled
-in later) are not supported at the moment, so $sth->bind_param() is 
-not implemented, the @bind_values argument to $sth->execute is ignored,
-and the %attr and @bind_values parameters to $dbh->do are also
-ignored. Placeholders will be implemented in a future version.
+Setting $dbh->{LongReadLen} has no effect. Use $dbh->do("set textsize xxxx")
+instead.
+
 
 =head1 SEE ALSO
 
 L<DBI>
+Sybase OpenClient C manuals.
+Sybase Transact SQL manuals.
 
 =head1 AUTHOR
 
@@ -274,7 +312,7 @@ DBD::Sybase by Michael Peppler
 
 =head1 COPYRIGHT
 
-The DBD::Sybase module is Copyright (c) 1997 Michael Peppler.
+The DBD::Sybase module is Copyright (c) 1997, 1998 Michael Peppler.
 The DBD::Sybase module is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself with the exception that it
 cannot be placed on a CD-ROM or similar media for commercial distribution

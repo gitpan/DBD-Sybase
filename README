@@ -1,8 +1,8 @@
-$Id: README,v 1.2 1997/10/07 00:51:20 mpeppler Exp $
+$Id: README,v 1.3 1998/05/20 22:37:13 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996, 1997  Michael Peppler
+   Copyright (c) 1996, 1997, 1998  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -26,8 +26,7 @@ version of the libraries from my homepage (http://www.mbay.net/~mpeppler).
 
 This version of DBD::Sybase is a first attempt at a (fairly) complete
 implementation of the DBI spec. There are no doubt quite a few bugs,
-and certain things (such as BLOBs and parameter binding on execution
-of insert/update) aren't handled right.
+and certain things (such as BLOBs) aren't handled right.
 
 Building:
 
@@ -67,21 +66,21 @@ $dbh = DBI->connect($data_source, $username, $auth, \%attr);
 $rc  = $dbh->disconnect;
 
 $rv  = $dbh->do($statement);
-$rv  = $dbh->do($statement, \%attr);			Not supported
-$rv  = $dbh->do($statement, \%attr, @bind_values);	Not supported
+$rv  = $dbh->do($statement, \%attr);			%attr is ignored
+$rv  = $dbh->do($statement, \%attr, @bind_values);	%attr is ignored
 
 $sth = $dbh->prepare($statement);
-$sth = $dbh->prepare($statement, \%attr);		Not supported
+$sth = $dbh->prepare($statement, \%attr);		%attr is ignored
 
 $rc = $sth->bind_col($col_num, \$col_variable);
 $rc = $sth->bind_columns(\%attr, @list_of_refs_to_vars_to_bind);
 
-$rv = $sth->bind_param($param_num, $bind_value);	Not supported
-$rv = $sth->bind_param($param_num, $bind_value, $bind_type);	"
-$rv = $sth->bind_param($param_num, $bind_value, \%attr);	"
+$rv = $sth->bind_param($param_num, $bind_value);
+$rv = $sth->bind_param($param_num, $bind_value, $bind_type);	$bind_type ignored
+$rv = $sth->bind_param($param_num, $bind_value, \%attr);	%attr ignored
 
 $rv = $sth->execute;
-$rv = $sth->execute(@bind_values);			Not supported
+$rv = $sth->execute(@bind_values);
 
 @row_ary  = $sth->fetchrow_array;
 $ary_ref  = $sth->fetchrow_arrayref;

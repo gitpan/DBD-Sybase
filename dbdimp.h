@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.2 1997/09/26 23:26:47 mpeppler Exp $
+   $Id: dbdimp.h,v 1.3 1998/05/20 22:39:41 mpeppler Exp $
 
-   Copyright (c) 1997  Michael Peppler
+   Copyright (c) 1997, 1998  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -50,6 +50,22 @@ struct imp_dbh_st {
    int inTransaction;   
 };
 
+typedef struct phs_st {
+    int ftype;
+    SV *sv;
+    int sv_type;
+    bool is_inout;
+    IV maxlen;
+
+    char *sv_buf;
+
+    CS_DATAFMT datafmt;
+    
+    int alen_incnull;	/* 0 or 1 if alen should include null	*/
+    char name[1];	/* struct is malloc'd bigger as needed	*/
+
+} phs_t;
+
 
 /* Define sth implementor data structure */
 struct imp_sth_st {
@@ -64,6 +80,8 @@ struct imp_sth_st {
     int         moreResults;
 
     /* Input Details	*/
+    char      dyn_id[50];	/* The id for this ct_dynamic() call */
+    int       dyn_execed;       /* true if ct_dynamic(CS_EXECUTE) has been called */
     char      *statement;	/* sql (see sth_scan)		*/
     HV        *all_params_hv;	/* all params, keyed by name	*/
     AV        *out_params_av;	/* quick access to inout params	*/

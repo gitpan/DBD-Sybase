@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.2 1997/10/07 00:53:18 mpeppler Exp $
+# $Id: main.t,v 1.4 1998/05/20 22:38:54 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -36,13 +36,13 @@ foreach (@dirs)
 }
 
 my($switch) = DBI->internal;
-DBI->trace(0); # 2=detailed handle trace
+#DBI->trace(2); # 2=detailed handle trace
 
 print "Switch: $switch->{'Attribution'}, $switch->{'Version'}\n";
 
 print "Available Drivers: ",join(", ",DBI->available_drivers()),"\n";
 
-my $dbh = DBI->connect("dbi:Sybase:$Srv", $Uid, $Pwd);
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError => 0});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;
@@ -74,7 +74,7 @@ if($sth->execute) {
     ($rows == $sth->rows)
 	and print "ok 5\n"
 	    or print "not ok 5\n";
-    $sth->finish;
+#    $sth->finish;
 }
 else {
     print STDERR ($DBI::err, ":\n", $sth->errstr);
@@ -90,7 +90,7 @@ if($sth->execute) {
     while(@dat = $sth->fetchrow) {
 	print "@dat\n";
     }
-    $sth->finish;
+#    $sth->finish;
 }
 else {
     print "ok 7\n";
@@ -124,7 +124,7 @@ if($sth->execute) {
     ($rows == $sth->rows)
 	and print "ok 12\n"
 	    or print "not ok 12\n";
-    $sth->finish;
+#    $sth->finish;
 }
 else {
     print STDERR ($DBI::err, ":\n", $sth->errstr);
