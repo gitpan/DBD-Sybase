@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: exec.t,v 1.5 2004/10/04 14:13:33 mpeppler Exp $
+# $Id: exec.t,v 1.6 2004/10/07 17:56:55 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -64,6 +64,7 @@ $sth->bind_param(4, "jan 1 2001");
 $sth->bind_param(5, 5.4, SQL_FLOAT);
 $rc = $sth->execute();
 ok(defined($rc), "execute dbitest 1");
+#DBI->trace(4);
 get_all_results($sth);
 
 $rc = $sth->execute("one", 25, 333.2, "jan 1 2001", 5.4);
@@ -121,6 +122,7 @@ sub get_all_results {
 
     do {
 	while(my $d = $sth->fetch) {
+	    #print "@$d\n";
 	    ;
 	}
     } while($sth->{syb_more_results});

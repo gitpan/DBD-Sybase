@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.71 2004/10/04 14:13:32 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.72 2004/10/07 17:56:55 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -3322,33 +3322,10 @@ syb_st_cancel(sth, imp_sth)
     return 1;
 }
 
-
-AV *
-syb_st_fetch(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+static int fix_fbav(imp_sth_t *imp_sth, int num_fields, AV *av)
 {
-    dTHR;
-    D_imp_dbh_from_sth;
-    CS_COMMAND *cmd = imp_sth->cmd;
-    int num_fields;
-    int ChopBlanks;
-    int i;
-    AV *av;
-    CS_RETCODE retcode;
-    CS_INT rows_read, restype;
-    int len;
     int clear_cache = 0;
-
-    /* Check that execute() was executed sucessfully. This also implies	*/
-    /* that describe() executed sucessfuly so the memory buffers	*/
-    /* are allocated and bound.						*/
-    if ( !DBIc_is(imp_sth, DBIcf_ACTIVE) || !imp_sth->exec_done ) {
-	return Nullav;
-    }
-
-    av = DBIS->get_fbav(imp_sth);
-    num_fields = AvFILL(av)+1;
+    int i;
 
     /* XXX
        The code in the if() below is likely to break with new versions
@@ -3375,21 +3352,54 @@ syb_st_fetch(sth, imp_sth)
 	++clear_cache;
     }
 
+    return clear_cache;
+}
+
+static void clear_cache(SV *sth)
+{
     /* Clear cached statement handle attributes, if necessary */
-    if(clear_cache) {
-	SV *value;
-	char *key;
-	I32 keylen;
-        while ( (value = hv_iternextsv((HV*)SvRV(sth), &key, &keylen)) ) {
-            if (strncmp(key, "NAME_", 5) == 0 ||
-		strncmp(key, "TYPE", 4) == 0 ||
-		strncmp(key, "PRECISION", 9) == 0 ||
-		strncmp(key, "SCALE", 5) == 0 ||
-		strncmp(key, "NULLABLE", 8) == 0               ) {
-                hv_delete((HV*)SvRV(sth), key, keylen, G_DISCARD);
-            }
-        }
+    SV *value;
+    char *key;
+    I32 keylen;
+    while ( (value = hv_iternextsv((HV*)SvRV(sth), &key, &keylen)) ) {
+	if (strncmp(key, "NAME_", 5) == 0 ||
+	    strncmp(key, "TYPE", 4) == 0 ||
+	    strncmp(key, "PRECISION", 9) == 0 ||
+	    strncmp(key, "SCALE", 5) == 0 ||
+	    strncmp(key, "NULLABLE", 8) == 0               ) {
+	    hv_delete((HV*)SvRV(sth), key, keylen, G_DISCARD);
+	}
     }
+}
+
+AV *
+syb_st_fetch(sth, imp_sth)
+    SV *sth;
+    imp_sth_t *imp_sth;
+{
+    dTHR;
+    D_imp_dbh_from_sth;
+    CS_COMMAND *cmd = imp_sth->cmd;
+    int num_fields;
+    int ChopBlanks;
+    int i;
+    AV *av;
+    CS_RETCODE retcode;
+    CS_INT rows_read, restype;
+    int len;
+
+    /* Check that execute() was executed sucessfully. This also implies	*/
+    /* that describe() executed sucessfuly so the memory buffers	*/
+    /* are allocated and bound.						*/
+    if ( !DBIc_is(imp_sth, DBIcf_ACTIVE) || !imp_sth->exec_done ) {
+	return Nullav;
+    }
+
+    av = DBIS->get_fbav(imp_sth);
+    num_fields = AvFILL(av)+1;
+
+    if(fix_fbav(imp_sth, num_fields, av))
+	clear_cache(sth);
 
     ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
 
@@ -3503,15 +3513,11 @@ syb_st_fetch(sth, imp_sth)
 		      restype);
 
 	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
-#if 0
-	      if(DBIS->debug >= 2)
-		  PerlIO_printf(DBILOGFP, "    syb_st_fetch() -> resetting ACTIVE, moreResults, dyn_execed\n");
-	      imp_sth->moreResults = 0;
-	      imp_sth->dyn_execed = 0;
-	      DBIc_ACTIVE_off(imp_sth);
-#endif
 	      return Nullav;
 	  } else {		/* XXX What to do here??? */
+	      if(fix_fbav(imp_sth, num_fields, av))
+		  clear_cache(sth);
+
 	      if(restype == CS_COMPUTE_RESULT)
 		  goto TryAgain;
 	      imp_sth->moreResults = 1;
