@@ -1,4 +1,27 @@
-$Id: CHANGES,v 1.39 2002/10/23 21:58:07 mpeppler Exp $
+$Id: CHANGES,v 1.41 2003/04/02 19:39:52 mpeppler Exp $
+
+Release 1.00
+
+	Added data_sources().
+        Allow "SQL_BINARY" placeholder parameters to be passed either
+        as a hex string (with or without leading 0x), or as raw binary
+        data.
+
+	Bugs Fixed:
+
+	477 - segfault when servermsg_cb is called with a null connection
+	480 - Makefile.PL searches system dirs before PERL5LIB dirs when 
+              looking for DBI installation.
+	485 - Incorrect handling of large varbinary columns on fetches.
+	489 - (same as 497, see below).
+	492 - Can't compile on Win2k.
+	494 - Do not try to use the ocs.cfg file if it exists.
+	495 - Incorrect handling of parameters when using placeholders &
+              stored procs.
+        497 - implicit type conversions with prepared statements often fail
+	503 - Binary placeholders with stored procedures.
+	506 - Default scriptName/hostname connect() params.
+	508 - DBD::Sybase doesn't build under Win2k.
 
 Release 0.95
 

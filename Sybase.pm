@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.41 2002/10/23 21:58:07 mpeppler Exp $
+# $Id: Sybase.pm,v 1.44 2003/04/03 19:15:13 mpeppler Exp $
 
-# Copyright (c) 1996-2002   Michael Peppler
+# Copyright (c) 1996-2003   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -14,14 +14,18 @@
     use DBI ();
     use DynaLoader ();
     use Exporter ();
+
+    use Sys::Hostname ();
+
     @ISA = qw(DynaLoader Exporter);
 
     @EXPORT = qw(CS_ROW_RESULT CS_CURSOR_RESULT CS_PARAM_RESULT
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.95';
-    my $Revision = substr(q$Revision: 1.41 $, 10);
+    $hostname = Sys::Hostname::hostname();
+    $VERSION = '1.00';
+    my $Revision = substr(q$Revision: 1.44 $, 10);
 
     require_version DBI 1.02;
 
@@ -82,6 +86,21 @@
 	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) or return undef;
 
 	$this;
+    }
+
+    sub data_sources {
+	my @s;
+	if ($^O eq 'MSWin32') {
+	    open(INTERFACES, "$ENV{SYBASE}/ini/sql.ini") or return;
+	    @s = map { /\[(\S+)\]/i; "dbi:Sybase:server=$1" } grep /\[/i, <INTERFACES>;
+	    close(INTERFACES);
+	} else {
+	    open(INTERFACES, "$ENV{SYBASE}/interfaces") or return;
+	    @s = map { /^(\S+)/i; "dbi:Sybase:server=$1" } grep /^[^\s\#]/i, <INTERFACES>;
+	    close(INTERFACES);
+	}
+
+	return @s;
     }
 }
 
@@ -1684,11 +1703,9 @@ DBD::Sybase by Michael Peppler
 
 =head1 COPYRIGHT
 
-The DBD::Sybase module is Copyright (c) 1997-2001 Michael Peppler.
+The DBD::Sybase module is Copyright (c) 1997-2003 Michael Peppler.
 The DBD::Sybase module is free software; you can redistribute it and/or
-modify it under the same terms as Perl itself with the exception that it
-cannot be placed on a CD-ROM or similar media for commercial distribution
-without the prior approval of the author.
+modify it under the same terms as Perl itself.
 
 =head1 ACKNOWLEDGEMENTS
 

@@ -4,6 +4,7 @@ CHANGES
 CONFIG
 README
 README.vms
+README.freetds
 PWD
 Sybase.h
 Sybase.pm

@@ -127,8 +127,11 @@ All other numbers are returned in native format.
 
 =head2 String Data Handling
 
-DBD::Sybase supports CHAR/VARCHAR/BINARY/VARBINARY, all limited to 255
-characters in length.  The CHAR type is fixed length (blank padded).
+DBD::Sybase supports CHAR/VARCHAR/BINARY/VARBINARY, limited to 255
+characters in length up to version 12.0x.  As of 12.5 these datatypes can 
+be up to 16K in size - but supporting the larger sizes requires that
+Open Client 12.5 or later be used. Note that the CHAR type is fixed 
+length (blank padded).
 
 Sybase automatically converts CHAR and VARCHAR data between the
 character set of the server (see the syscharset system table) and the
@@ -680,5 +683,5 @@ functionality and encourages you to use them.
 
 # This driver summary for DBD::Sybase is Copyright (c) 1999 Tim Bunce
 # and Michael Peppler.
-# $Id: dbd-sybase.pod,v 1.7 2001/07/03 15:51:32 mpeppler Exp $
+# $Id: dbd-sybase.pod,v 1.8 2003/03/31 23:55:11 mpeppler Exp $
 

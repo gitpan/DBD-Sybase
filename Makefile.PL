@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.20 2002/10/22 23:12:47 mpeppler Exp $
+# $Id: Makefile.PL,v 1.21 2003/03/31 23:55:11 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -152,7 +152,7 @@ sub configure {
     	$config_sitearch = VMS::Filespec::unixify($config_sitearch);
     	$attr_dbi_include = VMS::Filespec::unixify($attr_dbi_include);
     }
-    my @try = ($Config{sitearchexp}, @INC);
+    my @try = (@INC, $Config{sitearchexp});
     unshift @try, $attr{DBI_INCLUDE} if $attr{DBI_INCLUDE};
     my $dbidir;
     for my $trydir (@try) {

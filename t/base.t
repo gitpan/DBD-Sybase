@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl -w
 #
-# $Id: base.t,v 1.1 1997/08/12 16:02:12 mpeppler Exp $
+# $Id: base.t,v 1.2 2003/03/31 23:55:11 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -19,6 +19,9 @@ $drh = DBI->install_driver('Sybase');
 (ref $drh eq 'DBI::dr') ? print "ok 4\n" : print "not ok 4\n";
 
 print "ok 5\n" if $drh->{Version};
+
+#my @d = DBI->data_sources('Sybase');
+#print STDERR "@d\n";
 
 BEGIN { $tests = 5 }
 exit 0;

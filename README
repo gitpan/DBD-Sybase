@@ -1,13 +1,11 @@
-$Id: README,v 1.18 2002/10/23 21:58:07 mpeppler Exp $
+$Id: README,v 1.21 2003/04/03 19:11:48 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996 - 2002  Michael Peppler
+   Copyright (c) 1996 - 2003  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
-
-		WARNING: THIS IS BETA SOFTWARE.
 
 
 This Sybase DBI driver is built using the Sybase OpenClient Client
@@ -24,27 +22,61 @@ See http://linux.sybase.com for details, or my homepage
 (http://www.mbay.net/~mpeppler).
 
 An alternative is to use the FreeTDS reimplementation of Client Library.
+With FreeTDS DBD::Sybase can be used to query a MS-SQL 7 or 2000
+database server from a Unix/linux host.
 See http://www.freetds.org for details.
+
+If you use FreeTDS please read the README.freetds file.
 
 DBD::Sybase is a reasonably complete implementation of the DBI spec, but 
 there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
-This release (0.95) includes a fairly large number of bug fixes (see the
-CHANGES file or read the "recent changes" below). In particular there
-are changes in the way empty strings are bound when using placeholders,
-and the default behavior of $sth->execute() for certain types of failures
-has changed (please see the syb_cancel_request_on_error and 
-syb_bind_empty_string_as_null attributes for details).
-
-This means that you should thoroughly test this release before using
-it in production.
-
 The full write-ups of the bugs that are listed below as "fixed" can be
 seen at http://www.peppler.org/cgi-bin/bug.cgi.
 
+Getting Help
+============
+
+If you are stuck please start by searching the Web, the appropriate
+mailing lists and my bug database, as it is likely that someone else
+will have experienced the same problem before you.
+
+The sybperl-l mailing list is dedicated to Sybase <-> perl issues and 
+covers both the sybperl modules (Sybase::CTlib, etc.) and DBD::Sybase.
+It is archived and searchable at http://www.peppler.org/archive/sybperl-l/
+
+If after seaching you still don't find any solution then post a question
+(with as much detail as possible) to either dbi-users@perl.org,
+sybperl-l@peppler.org or freetds@lists.ibiblio.org (only use the
+latter if you use the FreeTDS libraries with DBD::Sybase).
+
 
 Recent changes:
+
+Release 1.00
+
+	Removed "beta" tag!
+	Added data_sources().
+        Allow "SQL_BINARY" placeholder parameters to be passed either
+        as a hex string (with or without leading 0x), or as raw binary
+        data.
+
+	Bugs Fixed:
+
+	477 - segfault when servermsg_cb is called with a null connection
+	480 - Makefile.PL searches system dirs before PERL5LIB dirs when 
+              looking for DBI installation.
+	485 - Incorrect handling of large varbinary columns on fetches.
+	489 - (same as 497, see below).
+	492 - Can't compile on Win2k.
+	494 - Do not try to use the ocs.cfg file if it exists.
+	495 - Incorrect handling of parameters when using placeholders &
+              stored procs.
+        497 - implicit type conversions with prepared statements often fail
+	503 - Binary placeholders with stored procedures.
+	506 - Default scriptName/hostname connect() params.
+	508 - DBD::Sybase doesn't build under Win2k.
 
 Release 0.95
 
@@ -136,10 +168,10 @@ at $SYBASE/lib ($SYBASE/$SYBASE_OCS/lib for ASE 12.x installations.)
 This behaviour is experimental, and will only work
 on Unix and VMS systems (ie on Win32 you still have to edit the CONFIG
 file the old way), but appears to work fine on the two systems I have
-access to (Sybase 11.5/Solaris 7 & Sybase 11.0.3.3/linux) and on Sybase
+access to (Sybase 12.0/Solaris 7 & Sybase 12.5/linux) and on Sybase
 10.0.2.3/OpenVMS AXP 7.1. It assumes that $SYBASE is set and points to 
 the Sybase installation directory that you want to use to build 
-DBD::Sybase.
+DBD::Sybase, and will also use the value of $SYBASE_OCS if it is set.
 
 Start by editing the PWD file to set a valid user, password and server
 for the test scripts to use.
@@ -217,14 +249,7 @@ additional details.
 FreeTDS:
 --------
 
-The FreeTDS implementation of OpenClient Client Library is still somewhat
-limited. DBD::Sybase will work with FreeTDS, but a number of features
-will either fail silently, or possibly cause your script to crash.
-In particular FreeTDS does not support ?-style placeholders yet (FreeTDS 0.60)
-The "make test" phase of the DBD::Sybase build will fail in various places
-when you've built it with the FreeTDS libraries. This is normal, but should
-allow you to see which DBD::Sybase features are available.
-
+See the README.freetds file for details.
 
 The regression tests cover the normal operations, but they are by no 
 means complete, so don't necessarily believe all is fine if the

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: place.t,v 1.4 2001/07/03 15:52:53 mpeppler Exp $
+# $Id: place.t,v 1.5 2003/03/31 23:55:11 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -105,6 +105,22 @@ while($row = $sth->fetch) {
 ($count == 1) and print "ok 11\n"
     or print "not ok 11\n";
 
+if(0) {
+    $dbh->do("create table #t2(id int, c varchar(10))");
+    $dbh->do("
+insert #t2 values(1, 'one')
+insert #t2 values(2, 'two')
+");
+    $sth = $dbh->prepare("select id, c from #t2 where id = ?");
+    $sth->execute(1);
+    DBI->trace(3);
+    $row = $sth->fetch;
+    #$sth->finish;
+    $sth->execute(2);
+    $row = $sth->fetch;
+    $sth->finish;
+}
+    
 $dbh->disconnect;
 
 exit(0);

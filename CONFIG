@@ -1,4 +1,4 @@
-# $Id: CONFIG,v 1.8 2002/01/23 00:10:48 mpeppler Exp $
+# $Id: CONFIG,v 1.9 2003/03/31 23:55:11 mpeppler Exp $
 # Configuration file for DBD::Sybase.
 #
 # The Makefile.PL file attempts to set reasonable defaults for the
@@ -7,7 +7,7 @@
 # Where is the Sybase directory on your system (include files &
 # libraries are expected to be found at SYBASE/include & SYBASE/lib
 # If not set, uses the SYBASE environment variable.
-SYBASE=
+SYBASE=$ENV{SYBASE}||'/opt/sybase'
 
 # Additional libraries.
 # Some systems require -lnsl or -lBSD.

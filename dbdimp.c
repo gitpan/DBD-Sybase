@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.40 2002/10/23 21:58:07 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.43 2003/04/03 19:15:13 mpeppler Exp $
 
-   Copyright (c) 1997-2002  Michael Peppler
+   Copyright (c) 1997-2003  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -71,6 +71,7 @@ static void syb_set_error(imp_dbh_t *, int, char *);
 
 static CS_CONTEXT *context;
 static char scriptName[255];
+static char hostname[255];
 static char *ocVersion;
 
 static void
@@ -197,14 +198,14 @@ CS_CLIENTMSG	*errmsg;
 	    return CS_SUCCEED;
 	}
     } else {			/* !connection */
-	fprintf(stderr, "OpenClient message: ");
-	fprintf(stderr, "LAYER = (%ld) ORIGIN = (%ld) ",
+	PerlIO_printf(PerlIO_stderr(), "OpenClient message: ");
+	PerlIO_printf(PerlIO_stderr(), "LAYER = (%ld) ORIGIN = (%ld) ",
 		CS_LAYER(errmsg->msgnumber), CS_ORIGIN(errmsg->msgnumber));
-	fprintf(stderr, "SEVERITY = (%ld) NUMBER = (%ld)\n",
+	PerlIO_printf(PerlIO_stderr(), "SEVERITY = (%ld) NUMBER = (%ld)\n",
 		CS_SEVERITY(errmsg->msgnumber), CS_NUMBER(errmsg->msgnumber));
-	fprintf(stderr, "Message String: %s\n", errmsg->msgstring);
+	PerlIO_printf(PerlIO_stderr(), "Message String: %s\n", errmsg->msgstring);
 	if (errmsg->osstringlen > 0) {
-	    fprintf(stderr, "Operating System Error: %s\n",
+	    PerlIO_printf(PerlIO_stderr(), "Operating System Error: %s\n",
 		    errmsg->osstring);
 	}
     }
@@ -227,11 +228,14 @@ CS_SERVERMSG	*srvmsg;
        || srvmsg->msgnumber == 5704)
 	return CS_SUCCEED;
 
-    if((ct_con_props(connection, CS_GET, CS_USERDATA,
+    /* add check on connection not being NULL (PR/477)
+       just to be on the safe side - freetds can call the server
+       callback with a NULL connection */
+    if(connection && (ct_con_props(connection, CS_GET, CS_USERDATA,
 		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
 	croak("Panic: servermsg_cb: Can't find handle from connection");
 
-    if(imp_dbh->err_handler) {
+    if(imp_dbh && imp_dbh->err_handler) {
 	dSP;
 	int retval, count;
 
@@ -404,6 +408,7 @@ CS_DATAFMT *column;
 
       case CS_BINARY_TYPE:
       case CS_VARBINARY_TYPE:
+      case CS_LONGBINARY_TYPE:
 	len = (2 * column->maxlength) + 2;
 	break;
 	
@@ -528,33 +533,29 @@ void syb_init(dbistate)
     CS_INT      outlen;
     CS_RETCODE  retcode = CS_FAIL;
     CS_INT      cs_ver;
+    CS_INT      boolean = CS_FALSE;
 
     DBIS = dbistate;
 
-#if 0
-    if((retcode = cs_ctx_alloc(CTLIB_VERSION, &context)) != CS_SUCCEED)
-	croak("DBD::Sybase initialize: cs_ctx_alloc() failed");
-#endif
-
 #if defined(CS_VERSION_125)
     cs_ver = CS_VERSION_125;
-    retcode = cs_ctx_global(cs_ver, &context);
+    retcode = cs_ctx_alloc(cs_ver, &context);
 #if defined(CS_VERSION_120)
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_120;
-	retcode = cs_ctx_global(cs_ver, &context);
+	retcode = cs_ctx_alloc(cs_ver, &context);
     }
 #if defined(CS_VERSION_110)
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_110;
-	retcode = cs_ctx_global(cs_ver, &context);
+	retcode = cs_ctx_alloc(cs_ver, &context);
     }
 #endif
 #endif
 #endif
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_100;
-	retcode = cs_ctx_global(cs_ver, &context);
+	retcode = cs_ctx_alloc(cs_ver, &context);
     }
 
     if(retcode != CS_SUCCEED)
@@ -562,9 +563,16 @@ void syb_init(dbistate)
 
 /*    warn("context version: %d", cs_ver); */
 
+#if defined(CS_EXTERNAL_CONFIG)
+    if(cs_config(context, CS_SET, CS_EXTERNAL_CONFIG, &boolean, CS_UNUSED, NULL) != CS_SUCCEED) {
+	/* Ignore this error... */
+	/* warn("Can't set CS_EXTERNAL_CONFIG to false"); */
+    }
+#endif
+
     if((retcode = ct_init(context, cs_ver)) != CS_SUCCEED)
     {
-#if 0
+#if 1
 	cs_ctx_drop(context);
 #endif
 	context = NULL;
@@ -608,6 +616,16 @@ void syb_init(dbistate)
 	    ++p;
 	    strcpy(scriptName, p);
 	}
+	/* PR 506 */
+	if(!strcmp(scriptName, "-e")) {
+	    strcpy(scriptName, "perl -e");
+	}
+    }
+    /* PR 506 - get hostname */
+    if((sv = perl_get_sv("DBD::Sybase::hostname", FALSE)))
+    {
+	strcpy(hostname, SvPV(sv, lna));
+	/*fprintf(stderr, "Got hostname: %s\n", hostname);*/
     }
 
     if(dbis->debug >= 2) {
@@ -944,10 +962,10 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	}
 	if(*imp_dbh->hostname) {
 	    if((retcode = ct_con_props(connection, CS_SET, CS_HOSTNAME, 
-				       imp_dbh->hostname,
+	       *imp_dbh->hostname ? imp_dbh->hostname : hostname,
 				       CS_NULLTERM, NULL)) != CS_SUCCEED)
 	    {
-		warn("ct_con_props(CS_APPNAME, %s) failed", imp_dbh->scriptName);
+		warn("ct_con_props(CS_HOSTNAME, %s) failed", imp_dbh->hostname);
 		return 0;
 	    }
 	}
@@ -972,6 +990,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 /*	    warn("ct_connect() failed"); */
 	    if(locale != NULL)
 		cs_loc_drop(context, locale);
+	    ct_con_drop(connection);
 	    return 0;
 	}
     }
@@ -1837,7 +1856,8 @@ dbd_preparse(imp_sth, statement)
 	}
 	if (dbis->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    dbd_preparse parameter %s (%s)\n",
-		    start, varname);
+			  ((phs_t*)(void*)SvPVX(phs_sv))->name,
+			  ((phs_t*)(void*)SvPVX(phs_sv))->varname);
 	/* warn("params_hv: '%s'\n", start);	*/
     }
     *dest = '\0';
@@ -2464,6 +2484,16 @@ syb_st_execute(sth, imp_sth)
     dTHR;
     D_imp_dbh_from_sth;
     int restype;
+
+#if 0
+    /* If this handle is still active call finish()... */
+    if(imp_sth->moreResults) {
+	int finish = imp_dbh->flushFinish;
+	imp_dbh->flushFinish = 1;
+	syb_st_finish(sth, imp_sth);
+	imp_dbh->flushFinish = finish;
+    }
+#endif
 
     imp_dbh->lasterr = 0;
     imp_dbh->lastsev = 0;
@@ -3395,6 +3425,44 @@ to_money(str, locale)
     return mn;
 }
 
+static CS_BINARY *
+to_binary(str)
+    char *str;
+{
+    CS_BINARY *b, *b_ptr;
+    char s[3], *strtol_end;
+    int i, b_len;
+    long int x;
+    
+    /* Advance past the 0x. We could use the value of syb_use_bin_0x 
+       to infer whether to advance or not, but it's just as easy to 
+       explicitly check. */
+     if (str[0] == '0' && str[1] == 'x') 
+	 str+=2;
+
+     /* The length of 'str' _should_ be even, but we go thru some acrobatics
+        to handle an odd length. We won't flag it as invalid, just pretend
+        it's okay. */
+     b_len = (strlen(str)+1) / 2;
+     b = (CS_BINARY *)safemalloc(b_len);
+     memset(b, 0, b_len);
+     memset(&s, '\0', 3);
+  
+     /* Pack the characters */
+     b_ptr = b;
+     for (i=0; i<b_len; i++, str+=2) {
+	 strncpy(s, str, 2);
+	 x = strtol(s, &strtol_end, 16);
+	 if (*strtol_end != '\0') {
+	     warn("conversion failed: invalid char '%c'", *strtol_end);
+	     break;
+	 }
+	 *b_ptr++ = x;
+     }
+     return b;
+}
+
+
 
 static int 
 _dbd_rebind_ph(sth, imp_sth, phs, maxlen) 
@@ -3412,10 +3480,12 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     CS_NUMERIC n_value;
     CS_MONEY m_value;
     CS_INT datatype;
+    int free_value = 0;
 
     if (dbis->debug >= 2) {
         char *text = neatsvpv(phs->sv,0);
- 	PerlIO_printf(DBILOGFP, "       bind %s <== %s (", phs->name, text);
+ 	PerlIO_printf(DBILOGFP, "       bind %s (%s) <== %s (", 
+		      phs->name, phs->varname, text);
  	if (SvOK(phs->sv)) 
  	     PerlIO_printf(DBILOGFP, "size %ld/%ld/%ld, ",
  		(long)SvCUR(phs->sv),(long)SvLEN(phs->sv),phs->maxlen);
@@ -3450,12 +3520,14 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     /* At this point phs->sv must be at least a PV with a valid buffer, */
     /* even if it's undef (null)                                        */
     /* Here we set phs->sv_buf, and value_len.                */
+
+    /* determine the value, and length that we wish to pass to
+       ct_param() */
+    datatype = phs->datafmt.datatype;
+
     if (SvOK(phs->sv)) {
         phs->sv_buf = SvPV(phs->sv, value_len);
 
-	/* determine the value, and length that we wish to pass to
-	   ct_param() */
-	datatype = phs->datafmt.datatype;
 	switch(phs->datafmt.datatype) {
 	  case CS_INT_TYPE:
 	  case CS_SMALLINT_TYPE:
@@ -3489,8 +3561,19 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	    value_len = sizeof(double);
 	    break;
 	  case CS_BINARY_TYPE:
+	    /* If this binary value is in hex format, with or without the
+	       leading 0x, then convert to actual binary value.
+	       Fix contributed by Tim Ayers */
 	    phs->datafmt.datatype = CS_BINARY_TYPE;
-	    value = phs->sv_buf;
+	    if((phs->sv_buf[0] == '0' && phs->sv_buf[1] == 'x') ||
+	       strspn(phs->sv_buf, "abcdefABCDEF0123456789") == value_len) 
+	    {
+		value = to_binary(phs->sv_buf);
+		++free_value;
+	    } else {
+		value = phs->sv_buf;
+	    } 
+	    /* value_len = SvCUR(phs->sv_buf); */
 	    break;
 	  case CS_DATETIME_TYPE:
 	  case CS_DATETIME4_TYPE:
@@ -3508,7 +3591,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	  default:
 	    phs->datafmt.datatype = CS_CHAR_TYPE;
 	    value = phs->sv_buf;
-	    value_len = CS_NULLTERM;
+	    value_len = CS_NULLTERM; /*Allow embeded NUL bytes in strings?*/
 	    /* PR/446: should an empty string cause a NULL, or not? */
 	    if(*(char*)value == 0) {
 		if(imp_dbh->bindEmptyStringNull) {
@@ -3559,6 +3642,9 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	warn("ct_param() failed!");
 
     phs->datafmt.datatype = datatype;
+
+    if(free_value && value != NULL)
+	safefree(value);
 
     return (rc == CS_SUCCEED);
 }
@@ -3615,7 +3701,7 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
         phs->ftype    = map_sql_types(phs->sql_type);
 	if(imp_sth->type == 1) { /* RPC call, must set up the datafmt struct */
 	    if(phs->varname[0] == '@') {
-		strcpy(phs->varname, phs->datafmt.name);
+		strcpy(phs->datafmt.name, phs->varname);
 		phs->datafmt.namelen = strlen(phs->varname);
 	    } else
 		phs->datafmt.namelen = 0;
@@ -3826,6 +3912,9 @@ static int map_sql_types(sql_type)
       case SQL_REAL:
       case SQL_DOUBLE:
 	ret = CS_FLOAT_TYPE;
+	break;
+      case SQL_BINARY:
+	return CS_BINARY_TYPE;
 	break;
       default:
 	ret = CS_CHAR_TYPE;

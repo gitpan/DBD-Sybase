@@ -1,7 +1,7 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.10 2001/12/13 01:05:26 mpeppler Exp $
-   Copyright (c) 1997-2001 Michael Peppler
+/* $Id: Sybase.xs,v 1.11 2003/04/03 19:15:13 mpeppler Exp $
+   Copyright (c) 1997-2003 Michael Peppler
 
    Uses from Driver.xst
    Copyright (c) 1994,1995,1996,1997  Tim Bunce
