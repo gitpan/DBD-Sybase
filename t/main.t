@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.4 1998/05/20 22:38:54 mpeppler Exp $
+# $Id: main.t,v 1.5 1999/08/30 14:24:45 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -67,7 +67,7 @@ if($sth->execute) {
     while(@dat = $sth->fetchrow) {
 	++$rows;
 	foreach (@dat) {
-	    $_ = '' unless $_;
+	    $_ = '' unless defined $_;
 	}
 	print "@dat\n";
     }

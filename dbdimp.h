@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.10 1999/06/22 07:31:59 mpeppler Exp $
+   $Id: dbdimp.h,v 1.11 1999/09/07 20:43:46 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -25,6 +25,7 @@ typedef struct _col_data
     CS_SMALLINT	indicator;
     CS_INT	type;
     CS_INT      realType;
+    CS_INT      realLength;
     union {
 	CS_CHAR	*c;
 	CS_INT i;
@@ -53,6 +54,7 @@ struct imp_dbh_st {
     int       inTransaction;
     int       doRealTran;
     int       chainedSupported;
+    int       quotedIdentifier;
 
     char      uid[32];
     char      pwd[32];
@@ -76,6 +78,7 @@ struct imp_dbh_st {
     int       showEed;
     int       showSql;
     int       flushFinish;
+    int       rowcount;
     char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
 					   used for error reporting */
 };

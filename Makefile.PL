@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.11 1999/05/31 21:38:41 mpeppler Exp $
+# $Id: Makefile.PL,v 1.12 1999/09/07 20:42:33 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -105,6 +105,9 @@ sub configure {
 	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
 	} else {
 	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $extra -lm";
+	}
+	if($^O =~ /linux/i) {
+	    $lib_string =~ s/ltcl/lsybtcl/;
 	}
     }
     

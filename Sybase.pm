@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.19 1999/06/23 17:07:25 mpeppler Exp $
+# $Id: Sybase.pm,v 1.20 1999/09/07 20:42:55 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.19';
-    my $Revision = substr(q$Revision: 1.19 $, 10);
+    $VERSION = '0.20';
+    my $Revision = substr(q$Revision: 1.20 $, 10);
 
     require_version DBI 1.02;
 
@@ -405,10 +405,6 @@ In general this is automatically negotiated between the client and the
 server, but in certain cases this may need to be forced to a lower level
 by the client. 
 
-I have heard rumors that setting this to CS_TDS_42 enables DBD::Sybase
-to connect to an MS-SQL 7.0 server, although I can't confirm that
-firsthand.
-
     $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
 
 B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
@@ -488,20 +484,20 @@ level:
 
 =over 4
 
-=item syb_show_sql
+=item syb_show_sql (bool)
 
 If set then the current statement is included in the string returned by 
 $dbh->errstr.
 
-=item syb_show_eed
+=item syb_show_eed (bool)
 
 If set, then extended error information is included in the string returned 
 by $dbh->errstr. Extended error information include the index causing a
 duplicate insert to fail, for example.
 
-=item syb_err_handler
+=item syb_err_handler (subroutine ref)
 
-B<NEW> Note that the syntax for the error handler is experimental and
+B<Note:> The syntax for the error handler is experimental and
 may change in future versions.
 
 This attribute is used to set an ad-hoc error handler callback (ie a perl 
@@ -514,6 +510,9 @@ The subroutine is called with 7 parameters: the Sybase error number,
 the severity, the state, the line number in the SQL batch, the server name 
 (if available), the stored procedure name (if available), and the message
 text.
+
+For client-side errors the state and line number are always 0, and the 
+server name and procedure name are always undef.
 
 Example:
 
@@ -536,7 +535,7 @@ Example:
     $dbh->do("exec someproc");    # get the showplan trace for this proc.
     $dbh->disconnect;
 
-=item syb_flush_finish
+=item syb_flush_finish (bool)
 
 If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
 any results remaining for the current command by actually fetching them.
@@ -544,13 +543,13 @@ The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
 I<appears> to cause connections to hang or to fail in certain cases (although
 I've never witnessed this myself.)
 
-=item syb_dynamic_supported
+=item syb_dynamic_supported (bool)
 
 This is a read-only attribute that returns TRUE if the dataserver
 you are connected to supports ?-style placeholders. Typically placeholders are
 not supported when using DBD::Sybase to connect to a MS-SQL server.
 
-=item syb_chained_txn
+=item syb_chained_txn (bool)
 
 If set then we use CHAINED transactions when AutoCommit is off. 
 Otherwise we issue an explicit BEGIN TRAN as needed. The default is off.
@@ -562,6 +561,34 @@ This attribute should usually be used only during the connect() call:
 Using it at any other time with B<AutoCommit> turned B<off> will 
 B<force a commit> on the current handle.
 
+=item syb_quoted_identifier (bool)
+
+If set, then identifiers that would normally clash with Sybase reserved
+words can be quoted using C<"identifier">. In this case strings must
+be quoted with the single quote.
+
+Default is for this attribute to be B<off>.
+
+=item syb_rowcount (int)
+
+Setting this attribute to non-0 will limit the number of rows returned by
+a I<SELECT>, or affected by an I<UPDATE> or I<DELETE> statement to the
+I<rowcount> value. Setting it back to 0 clears the limit.
+
+Default is for this attribute to be B<0>.
+
+=item syb_oc_version (string)
+
+Returns the identification string of the version of Client Library that
+this binary is currently using. This is a read-only attribute.
+
+For example:
+
+    troll (7:59AM):348 > perl -MDBI -e '$dbh = DBI->connect("dbi:Sybase:", "sa"); print "$dbh->{syb_oc_version}\n";' 
+    Sybase Client-Library/11.1.1/P/Linux Intel/Linux 2.2.5 i586/1/OPT/Mon Jun  7 07:50:21 1999
+
+This is very useful information to have when reporting a problem.
+
 
 =back
 
@@ -571,15 +598,15 @@ The following read-only attributes are available at the statement level:
 
 =over 4
 
-=item syb_more_results
+=item syb_more_results (bool)
 
 See the discussion on handling multiple result sets above.
 
-=item syb_result_type
+=item syb_result_type (int)
 
 Returns the numeric result type of the current result set. Useful when 
 executing stored procedurs to determine what type of information is
-currently fetchable (normal select rows, output parameters, status results,\
+currently fetchable (normal select rows, output parameters, status results,
 etc...).
 
 =back
@@ -743,6 +770,29 @@ Sybase 11.9.x corrects this hotspot problem.) In general it is better
 if your application is going to run against Sybase to write ad-hoc
 stored procedures rather than use the ? placeholders in embedded SQL.
 
+It is not possible to retrieve the last I<IDENTITY> value
+after an insert done with ?-style placeholders. This is a Sybase
+limitation/bug, not a DBD::Sybase problem. For example, assuming table
+I<foo> has an identity column:
+
+  $dbh->do("insert foo(col1, col2) values(?, ?)", undef, "string1", "string2");
+  $sth = $dbh->prepare('select @@identity') 
+    || die "Can't prepare the SQL statement: $DBI::errstr";
+  $sth->execute || die "Can't execute the SQL statement: $DBI::errstr";
+
+  #Get the data back.
+  while (my $row = $sth->fetchrow_arrayref()) {
+    print "IDENTITY value = $row->[0]\n";
+  }
+
+will always return an identity value of 0, which is obviously incorrect.
+This behaviour is due to the fact that the handling of ?-style placeholders
+is implemented using temporary stored procedures in Sybase, and the value
+of C<@@identity> is reset when the stored procedure has executed. Using an 
+explicit stored procedure to do the insert and trying to retrieve
+C<@@identity> after it has executed results in the same behaviour.
+
+
 Please see the discussion on Dynamic SQL in the 
 OpenClient C Programmer's Guide for details. The guide is available on-line
 at http://sybooks.sybase.com/
@@ -751,19 +801,26 @@ at http://sybooks.sybase.com/
 =head1 BUGS
 
 You can run out of space in the tempdb database if you use a lot of
-calls with bind variables (ie ? style placeholders) without closing the
+calls with bind variables (ie ?-style placeholders) without closing the
 connection. On my system, with an 8 MB tempdb database I run out of space
-after 760 prepare() statements with ? parameters. This is because
+after 760 prepare() statements with ?-parameters. This is because
 Sybase creates stored procedures for each prepare() call. So my
-suggestion is to only use ? style placeholders if you really need them
+suggestion is to only use ?-style placeholders if you really need them
 (i.e. if you are going to execute the same prepared statement multiple
 times).
+
+I have a simple bug tracking database at http://gw.peppler.org/cgi-bin/bug.cgi.
+You can use it to view known problems, or to report new ones. Keep in
+mind that peppler.org is connected to the net via a K56 dialup line, so
+it may be slow.
 
 
 =head1 SEE ALSO
 
 L<DBI>
+
 Sybase OpenClient C manuals.
+
 Sybase Transact SQL manuals.
 
 =head1 AUTHOR

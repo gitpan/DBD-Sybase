@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.18 1999/06/25 14:58:25 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.19 1999/09/07 20:43:30 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -42,6 +42,7 @@ static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
 
 static CS_CONTEXT *context;
 static char scriptName[255];
+static char ocVersion[255];
 
 static imp_dbh_t *DBH;
 
@@ -62,6 +63,42 @@ CS_CLIENTMSG	*errmsg;
     if(DBIc_is(imp_dbh, DBIcf_LongTruncOk) &&
 	CS_NUMBER(errmsg->msgnumber) == 132)
        return CS_SUCCEED;
+
+    if(imp_dbh->err_handler) {
+	dSP;
+	SV *sv, **svp;
+	HV *hv;
+	int retval, count;
+
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(sp);
+	    
+	
+	XPUSHs(sv_2mortal(newSViv(CS_NUMBER(errmsg->msgnumber))));
+	XPUSHs(sv_2mortal(newSViv(CS_SEVERITY(errmsg->msgnumber))));
+	XPUSHs(sv_2mortal(newSViv(0)));
+	XPUSHs(sv_2mortal(newSViv(0)));
+	XPUSHs(&sv_undef);
+	XPUSHs(&sv_undef);
+	XPUSHs(sv_2mortal(newSVpv(errmsg->msgstring, 0)));
+
+	
+	PUTBACK;
+	if((count = perl_call_sv(imp_dbh->err_handler, G_SCALAR)) != 1)
+	    croak("An error handler can't return a LIST.");
+	SPAGAIN;
+	retval = POPi;
+	
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+
+	/* If the called sub returns 0 then ignore this error */
+	if(retval == 0)
+	    return CS_SUCCEED;
+    }
+
 
     sv_setiv(DBIc_ERR(imp_dbh), (IV)CS_NUMBER(errmsg->msgnumber));
     
@@ -370,6 +407,7 @@ void syb_init(dbistate)
     CS_RETCODE	retcode;
     CS_INT	netio_type = CS_SYNC_IO;
     STRLEN      lna;
+    CS_INT      outlen;
 
     DBIS = dbistate;
 
@@ -395,6 +433,9 @@ void syb_init(dbistate)
 	croak("DBD::Sybase initialize: ct_config(netio) failed");
 
 
+    retcode = ct_config(context, CS_GET, CS_VER_STRING,
+			(CS_VOID*)ocVersion, 255, &outlen);
+
     if((sv = perl_get_sv("0", FALSE)))
     {
 	char *p;
@@ -404,6 +445,15 @@ void syb_init(dbistate)
 	    ++p;
 	    strcpy(scriptName, p);
 	}
+    }
+
+    if(dbis->debug >= 2) {
+	char *p = "";
+	if((sv = perl_get_sv("DBD::Sybase::VERSION", FALSE)))
+	    p = SvPV(sv, lna);
+	
+	fprintf(DBILOGFP, "    syb_init() -> DBD::Sybase %s initialized\n", p);
+	fprintf(DBILOGFP, "    OpenClient version: %s\n", ocVersion);
     }
 }
 
@@ -470,6 +520,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->flushFinish   = 0;
     imp_dbh->doRealTran    = 1;	/* default to use non-chained transaction mode */
     imp_dbh->chainedSupported = 1;
+    imp_dbh->quotedIdentifier = 0;
+    imp_dbh->rowcount = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -723,6 +775,28 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	}
 	if(dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_db_login() -> chained transactions are %s supported\n", retcode == CS_FAIL ? "not" : "");
+    }
+
+    if(imp_dbh->connection) {
+	/* we're setting a sub-connection, so make sure that any attributes
+	   such as syb_quoted_identifier and syb_rowcount are set here too */
+
+	if(imp_dbh->quotedIdentifier) {
+	    CS_INT value = 1;
+	    retcode = ct_options(connection, CS_SET, CS_OPT_QUOTED_IDENT, 
+				 &value, CS_UNUSED, NULL);
+	    if(retcode != CS_SUCCEED) {
+		warn("Setting of CS_OPT_QUOTED_IDENT failed.");
+	    }
+	}
+	if(imp_dbh->rowcount) {
+	    CS_INT value = imp_dbh->rowcount;
+	    retcode = ct_options(connection, CS_SET, CS_OPT_ROWCOUNT, 
+				 &value, CS_UNUSED, NULL);
+	    if(retcode != CS_SUCCEED) {
+		warn("Setting of CS_OPT_ROWCOUNT failed.");
+	    }
+	}
     }
 
     return connection;
@@ -992,6 +1066,12 @@ void     syb_db_destroy(dbh, imp_dbh)
     DBIc_IMPSET_off(imp_dbh);
 }
 
+
+/* NOTE: if you set any new attributes here that need to be passed on
+   to Sybase (for example via ct_options()) then make sure that you 
+   also code the same thing in syb_db_connect() so that connections
+   opened for nested statement handles correctly handle this issue */
+
 int
 syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     SV *dbh;
@@ -1079,6 +1159,20 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
 
+    if(kl == 25 && strEQ(key, "syb_quoted_identifier")) {
+	CS_INT value = SvIV(valuesv);
+	CS_RETCODE ret;
+	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_QUOTED_IDENT, 
+			 &value, CS_UNUSED, NULL);
+	if(ret != CS_SUCCEED) {
+	    warn("Setting of CS_OPT_QUOTED_IDENT failed.");
+	    return FALSE;
+	}
+	imp_dbh->quotedIdentifier = value;
+	
+	return TRUE;
+    }
+
     if (kl == 12 && strEQ(key, "syb_show_sql")) {
 	on = SvTRUE(valuesv);
 	if(on) {
@@ -1114,6 +1208,18 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	} else {
 	    imp_dbh->flushFinish = 0;
 	}
+	return TRUE;
+    }
+    if (kl == 12 && strEQ(key, "syb_rowcount")) {	
+	CS_INT value = SvIV(valuesv);
+	CS_RETCODE ret;
+	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_ROWCOUNT, 
+			 &value, CS_UNUSED, NULL);
+	if(ret != CS_SUCCEED) {
+	    warn("Setting of CS_OPT_ROWCOUNT failed.");
+	    return FALSE;
+	}
+	imp_dbh->rowcount = value;
 	return TRUE;
     }
     if (kl == 21 && strEQ(key, "syb_dynamic_supported")) {
@@ -1203,6 +1309,20 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = newSViv(0);
 	else
 	    retsv = newSViv(1);
+    }
+
+    if(kl == 25 && strEQ(key, "syb_quoted_identifier")) {
+	if(imp_dbh->quotedIdentifier)
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if(kl == 12 && strEQ(key, "syb_rowcount")) {
+	retsv = newSViv(imp_dbh->rowcount);
+    }
+
+    if(kl == 14 && strEQ(key, "syb_oc_version")) {
+	retsv = newSVpvn(ocVersion, strlen(ocVersion));
     }
 
     return retsv;
@@ -1301,11 +1421,15 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     D_imp_dbh_from_sth;
     CS_RETCODE ret;
 
+/*    fprintf(DBILOGFP, "st_prepare on %x\n", imp_sth); */
+
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
     if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
 	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
-	    croak("Panic: Can't have multiple statement handles on a singe database handle when AutoCommit is OFF");
+	    croak("Panic: Can't have multiple statement handles on a single database handle when AutoCommit is OFF");
+	if (dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_prepare() parent has active kids - opening new connection\n");
 	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL) {
 	    return 0;
 	}
@@ -1315,9 +1439,6 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	if(syb_db_opentran(NULL, imp_dbh) == 0)
 	    return 0;
 
-
-    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? imp_sth->connection :
-				 imp_dbh->connection);
 
     strncpy(imp_dbh->sql, statement, MAX_SQL_SIZE);
     imp_dbh->sql[MAX_SQL_SIZE - 1] = '\0';
@@ -1346,6 +1467,11 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 		    imp_sth->dyn_id);
 
 	imp_sth->dyn_execed = 0;
+
+	imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+				     imp_sth->connection :
+				     imp_dbh->connection);
+
 	ret = ct_dynamic(imp_sth->cmd, CS_PREPARE, imp_sth->dyn_id,
 			 CS_NULLTERM, statement, CS_NULLTERM);
 	if(ret != CS_SUCCEED) {
@@ -1391,20 +1517,21 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    imp_sth->dyn_execed = 1;
 	}
     } else {
-	ret = ct_command(imp_sth->cmd, CS_LANG_CMD, statement,
-			 CS_NULLTERM, CS_UNUSED);
-    }
-
-    if(imp_sth->statement != NULL) {
-	safefree(imp_sth->statement);
-	imp_sth->statement = NULL;
-    }
-    
+	/* delay the ct_command() to the syb_st_execute() call */
+	ret = CS_SUCCEED;
+/*
+	ret = ct_command(imp_sth->cmd, CS_LANG_CMD, imp_sth->statement,
+		      CS_NULLTERM, CS_UNUSED);
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
+*/	
+    }    
 
     if(ret != CS_SUCCEED) 
 	return 0;
 
     DBIc_on(imp_sth, DBIcf_IMPSET);
+    DBIc_ACTIVE_on(imp_sth);
 
     return 1;
 }
@@ -1512,6 +1639,7 @@ describe(imp_sth, restype)
 	}
 
 	imp_sth->coldata[i].realType = imp_sth->datafmt[i].datatype;
+	imp_sth->coldata[i].realLength = imp_sth->datafmt[i].maxlength;
 
 	imp_sth->datafmt[i].locale = imp_dbh->locale;
 
@@ -1650,10 +1778,27 @@ syb_st_execute(sth, imp_sth)
     imp_sth_t *imp_sth;
 {
     dTHR;
-    CS_COMMAND *cmd = imp_sth->cmd;
+    D_imp_dbh_from_sth;
     int restype;
 
-    if(ct_send(cmd) != CS_SUCCEED) {
+    if(!imp_sth->dyn_execed) {
+	imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+				     imp_sth->connection :
+				     imp_dbh->connection);
+	if(ct_command(imp_sth->cmd, CS_LANG_CMD, imp_sth->statement,
+		      CS_NULLTERM, CS_UNUSED) != CS_SUCCEED) {
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_st_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
+	    return -2;
+	}
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_execute() -> ct_command() OK\n");
+    }
+
+    if(ct_send(imp_sth->cmd) != CS_SUCCEED) {
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_execute() -> ct_send() failed\n");
+	
 	return -2;
     }
     if(dbis->debug >= 2)
@@ -1663,15 +1808,37 @@ syb_st_execute(sth, imp_sth)
     if(restype == CS_CMD_FAIL)
 	return -2;
 
-    DBIc_ACTIVE_on(imp_sth);
-
     if(restype == CS_CMD_DONE) {
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_execute() -> got CS_CMD_DONE: resetting ACTIVE, moreResults, dyn_execed\n");
 	imp_sth->moreResults = 0;
 	imp_sth->dyn_execed = 0;
 	DBIc_ACTIVE_off(imp_sth);
+    } else {
+	DBIc_ACTIVE_on(imp_sth);
     }
 
     return imp_sth->numRows;
+}
+
+int
+syb_st_cancel(sth, imp_sth)
+    SV *sth;
+    imp_sth_t *imp_sth;
+{
+    D_imp_dbh_from_sth;
+    CS_CONNECTION *connection = imp_sth->connection ? imp_sth->connection : 
+	imp_dbh->connection;
+
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_st_cancel() -> ct_cancel(CS_CANCEL_ATTN)\n");
+
+    if(ct_cancel(connection, NULL, CS_CANCEL_ATTN) == CS_FAIL) {
+	ct_close(connection, CS_FORCE_CLOSE);
+	imp_dbh->isDead = 1;
+    }	  
+    
+    return 1;
 }
 
 
@@ -1797,6 +1964,8 @@ syb_st_fetch(sth, imp_sth)
 		      restype);
 
 	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
+	      if(dbis->debug >= 2)
+		  fprintf(DBILOGFP, "    syb_st_fetch() -> resetting ACTIVE, moreResults, dyn_execed\n");
 	      imp_sth->moreResults = 0;
 	      imp_sth->dyn_execed = 0;
 	      DBIc_ACTIVE_off(imp_sth);
@@ -1828,6 +1997,8 @@ int      syb_st_finish(sth, imp_sth)
 	imp_dbh->connection;
 
     if (imp_dbh->flushFinish) {
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_finish() -> flushing\n");
 	while (DBIc_ACTIVE(imp_sth))
 	    while (syb_st_fetch(sth, imp_sth))
 		1;
@@ -1835,11 +2006,15 @@ int      syb_st_finish(sth, imp_sth)
     else {
 	if (DBIc_ACTIVE(imp_sth)) {
 #if defined(ROGUE)
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_st_finish() -> ct_cancel(CS_CANCEL_CURRENT)\n");
 	    if(ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT) == CS_FAIL) {
 		  ct_close(connection, CS_FORCE_CLOSE);
 		  imp_dbh->isDead = 1;
 	    }	  
 #else  
+	    if(dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_st_finish() -> ct_cancel(CS_CANCEL_ALL)\n");
 	    if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
 		  ct_close(connection, CS_FORCE_CLOSE);
 		  imp_dbh->isDead = 1;
@@ -1847,6 +2022,10 @@ int      syb_st_finish(sth, imp_sth)
 #endif
 	}
     }
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_st_finish() -> resetting ACTIVE, moreResults, dyn_execed\n");
+    imp_sth->moreResults = 0;
+    imp_sth->dyn_execed = 0;
     DBIc_ACTIVE_off(imp_sth);
     return 1;
 }
@@ -1872,8 +2051,8 @@ static void dealloc_dynamic(imp_sth)
 	;
 
     /* clean up added by Bryan Mawhinney */
-    if(imp_sth->statement)
-	 Safefree(imp_sth->statement);
+/*    if(imp_sth->statement)
+      Safefree(imp_sth->statement); */
     if (imp_sth->all_params_hv) {
 	HV *hv = imp_sth->all_params_hv;
 	SV *sv;
@@ -1905,12 +2084,19 @@ void     syb_st_destroy(sth, imp_sth)
     CS_RETCODE ret;
 
     if (dbis->debug >= 2)
-	fprintf(DBILOGFP, "    syb_st_destroy: called...\n");
+	fprintf(DBILOGFP, "    syb_st_destroy: called on %x...\n", imp_sth);
 
     if (DBIc_ACTIVE(imp_dbh))
 	if(!strncmp(imp_sth->dyn_id, "DBD", 3)) {
 	    dealloc_dynamic(imp_sth);
 	}
+
+    /* moved from the prepare() call - as we need to have this around
+       to re-execute non-dynamic statements... */
+    if(imp_sth->statement != NULL) {
+	safefree(imp_sth->statement);
+	imp_sth->statement = NULL;
+    }
 
     cleanUp(imp_sth);
 
@@ -1961,6 +2147,7 @@ static T_st_params S_st_fetch_params[] =
     s_A("LENGTH"),		/* 8 */
     s_A("syb_types"),		/* 9 */
     s_A("syb_result_type"),	/* 10 */
+    s_A("LongReadLen"),         /* 11 */
     s_A(""),			/* END */
 };
 
@@ -2032,13 +2219,23 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	    av = newAV();
 	    retsv = newRV(sv_2mortal((SV*)av));
 	    while(--i >= 0) 
-		av_store(av, i, newSViv(imp_sth->datafmt[i].precision));
+		av_store(av, i, newSViv(imp_sth->datafmt[i].precision ?
+		    imp_sth->datafmt[i].precision :
+		    imp_sth->coldata[i].realLength));
 	    break;
 	case 6:			/* SCALE */
 	    av = newAV();
 	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0) 
-		av_store(av, i, newSViv(imp_sth->datafmt[i].scale));
+	    while(--i >= 0) {
+		switch(imp_sth->coldata[i].realType) {
+		case CS_NUMERIC_TYPE:
+		case CS_DECIMAL_TYPE:
+		    av_store(av, i, newSViv(imp_sth->datafmt[i].scale));
+		    break;
+		default:
+		    av_store(av, i, newSVsv(&sv_undef));
+		}
+	    }
 	    break;
 	case 7:
 	    retsv = newSViv(imp_sth->moreResults);
@@ -2047,7 +2244,7 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	    av = newAV();
 	    retsv = newRV(sv_2mortal((SV*)av));
 	    while(--i >= 0)
-		av_store(av, i, newSViv(imp_sth->datafmt[i].maxlength));
+		av_store(av, i, newSViv(imp_sth->coldata[i].realLength));
 	    break;
 	case 9:			/* syb_types: native datatypes */
 	    av = newAV();
@@ -2116,9 +2313,14 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 
     if (dbis->debug >= 2) {
         char *text = neatsvpv(phs->sv,0);
-        fprintf(DBILOGFP, "bind %s <== %s (size %d/%d/%ld, ptype %ld, otype %d)\n",
-            phs->name, text, SvCUR(phs->sv),SvLEN(phs->sv),phs->maxlen,
-            SvTYPE(phs->sv), phs->ftype);
+ 	fprintf(DBILOGFP, "       bind %s <== %s (", phs->name, text);
+ 	if (SvOK(phs->sv)) 
+ 	     fprintf(DBILOGFP, "size %ld/%ld/%ld, ",
+ 		(long)SvCUR(phs->sv),(long)SvLEN(phs->sv),phs->maxlen);
+	else fprintf(DBILOGFP, "NULL, ");
+ 	fprintf(DBILOGFP, "ptype %d, otype %d%s)\n",
+ 	    (int)SvTYPE(phs->sv), phs->ftype,
+ 	    (phs->is_inout) ? ", inout" : "");
     }
  
     /* At the moment we always do sv_setsv() and rebind.        */
@@ -2183,7 +2385,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     /* value_len has current value length */
 
     if (dbis->debug >= 3) {
-        fprintf(DBILOGFP, "bind %s <== '%.100s' (size %d, ok %d)\n",
+        fprintf(DBILOGFP, "       bind %s <== '%.100s' (size %d, ok %d)\n",
             phs->name, phs->sv_buf, (long)phs->maxlen, SvOK(phs->sv)?1:0);
     }
 

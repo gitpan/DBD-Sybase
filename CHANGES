@@ -1,4 +1,20 @@
-$Id: CHANGES,v 1.17 1999/06/25 14:58:42 mpeppler Exp $
+$Id: CHANGES,v 1.18 1999/09/07 20:44:24 mpeppler Exp $
+
+Release 0.20
+
+	Fix code to allow prepare, execute, execute, execute... on 
+	statements that don't include ?-style placeholders.
+	Fix LENGTH/PRECISION/SCALE $sth attributes to be closer to the
+	DBI spec.
+	Fix core dump problem when binding undef values and having 
+	trace >= 2.
+	Add syb_quoted_identifier connection/database handle attribute.
+	Add syb_oc_version read-only database handle attribute, returns the 
+	Sybase library version that this binary is currently using.
+	Added the syb_rowcount $dbh attribute.
+	Added $sth->cancel().
+	Call the syb_err_handler (if one is defined) for client-side
+	errors.
 
 Release 0.19
 

@@ -1,6 +1,6 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.5 1999/05/16 18:29:21 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.6 1999/09/07 20:43:09 mpeppler Exp $
    Copyright (c) 1997-1999 Michael Peppler
 
    Uses from Driver.xst
@@ -43,6 +43,14 @@ _date_fmt(dbh, fmt)
     D_imp_dbh(dbh);
     ST(0) = syb_db_date_fmt(dbh, imp_dbh, fmt) ? &sv_yes : &sv_no;
 
+MODULE = DBD::Sybase    PACKAGE = DBD::Sybase::st
+
+void
+cancel(sth)
+    SV *	sth
+    CODE:
+    D_imp_sth(sth);
+    ST(0) = syb_st_cancel(sth, imp_sth) ? &sv_yes : &sv_no;
 
 
 MODULE = DBD::Sybase	PACKAGE = DBD::Sybase
