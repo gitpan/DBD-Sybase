@@ -1,7 +1,7 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.8 2000/09/01 18:28:20 mpeppler Exp $
-   Copyright (c) 1997-2000 Michael Peppler
+/* $Id: Sybase.xs,v 1.9 2001/07/03 15:51:28 mpeppler Exp $
+   Copyright (c) 1997-2001 Michael Peppler
 
    Uses from Driver.xst
    Copyright (c) 1994,1995,1996,1997  Tim Bunce
@@ -71,6 +71,61 @@ cancel(sth)
     CODE:
     D_imp_sth(sth);
     ST(0) = syb_st_cancel(sth, imp_sth) ? &sv_yes : &sv_no;
+
+void
+ct_get_data(sth, column, bufrv, buflen=0)
+    SV *	sth
+    int		column
+    SV *	bufrv
+    int		buflen
+    CODE:
+    {
+    D_imp_sth(sth);
+    int len = syb_ct_get_data(sth, imp_sth, column, bufrv, buflen);
+    ST(0) = sv_2mortal(newSViv(len));
+    }
+
+void
+ct_data_info(sth, action, column, attr=&PL_sv_undef)
+    SV *	sth
+    char *	action
+    int		column
+    SV *	attr
+    CODE:
+    {
+    D_imp_sth(sth);
+    int sybaction;
+    if(strEQ(action, "CS_SET")) {
+	sybaction = CS_SET;
+    } else if (strEQ(action, "CS_GET")) {
+	sybaction = CS_GET;
+    }
+    ST(0) = syb_ct_data_info(sth, imp_sth, sybaction, column, attr) ? &sv_yes : &sv_no;
+    }
+
+void
+ct_send_data(sth, buffer, size)
+    SV *	sth
+    char *	buffer
+    int		size
+    CODE:
+    D_imp_sth(sth);
+    ST(0) = syb_ct_send_data(sth, imp_sth, buffer, size) ? &sv_yes : &sv_no;
+
+void
+ct_prepare_send(sth)
+    SV *	sth
+    CODE:
+    D_imp_sth(sth);
+    ST(0) = syb_ct_prepare_send(sth, imp_sth) ? &sv_yes : &sv_no;
+
+void
+ct_finish_send(sth)
+    SV *	sth
+    CODE:
+    D_imp_sth(sth);
+    ST(0) = syb_ct_finish_send(sth, imp_sth) ? &sv_yes : &sv_no;
+
 
 
 MODULE = DBD::Sybase	PACKAGE = DBD::Sybase

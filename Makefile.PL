@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.14 2000/10/04 15:48:53 mpeppler Exp $
+# $Id: Makefile.PL,v 1.16 2001/08/03 20:05:59 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -107,9 +107,9 @@ sub configure {
     } else {
 	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS});
 	if($file) {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -ldl -lm";
 	} else {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $extra -lm";
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $extra -ldl -lm";
 	}
 	if($^O =~ /linux|freebsd/i) {
 	    $lib_string =~ s/ltcl/lsybtcl/;
@@ -145,6 +145,11 @@ sub getExtraLibs {
 
     my $lib = "$dir/lib";
 
+    my $version = `strings $lib/libct.a`;
+    $version =~ /Sybase Client-Library\/([^\/]+)\//;
+    $version = $1;
+    print "Sybase OpenClient $version found.\n";
+
     opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
     my %files = map { $_ =~ s/lib([^\.]+)\..*/$1/; $_ => 1 } grep(/lib/, readdir(DIR));
     closedir(DIR);
@@ -156,10 +161,13 @@ sub getExtraLibs {
 	next if($file =~ /^-/);
 	delete($x{$f}) unless exists($files{$file});
     }
-    
 
-    foreach my $f (qw(insck tli sdna dnet_stub)) {
+    foreach my $f (qw(insck tli sdna dnet_stub tds)) {
 	$x{"-l$f"} = 1 if exists $files{$f};
+    }
+    if($version > 11) {
+	delete($x{-linsck});
+	delete($x{-ltli});
     }
 
     join(' ', keys(%x));

@@ -100,6 +100,13 @@ by the client.
 B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
 features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
 
+=item encryptPassword
+
+Specify the use of the client password encryption supported by CT-Lib.
+Specify a value of 1 to use encrypted passwords.
+
+    $dbh->DBI->connect("dbi:Sybase:encryptPassword=1", $user, $password);
+
 =back
 
 
@@ -673,5 +680,5 @@ functionality and encourages you to use them.
 
 # This driver summary for DBD::Sybase is Copyright (c) 1999 Tim Bunce
 # and Michael Peppler.
-# $Id: dbd-sybase.pod,v 1.6 2000/11/15 00:56:05 mpeppler Exp $
+# $Id: dbd-sybase.pod,v 1.7 2001/07/03 15:51:32 mpeppler Exp $
 

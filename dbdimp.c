@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.24 2000/11/15 00:55:48 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.26 2001/08/03 16:49:00 mpeppler Exp $
 
-   Copyright (c) 1997,1998,1999,2000  Michael Peppler
+   Copyright (c) 1997-2001  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -22,6 +22,17 @@
 #define dTHR	extern int errno
 #endif
 
+#include "patchlevel.h"		/* this is the perl patchlevel.h */
+
+#if PATCHLEVEL < 5 && SUBVERSION < 5
+
+#define PL_na na
+#define PL_sv_undef sv_undef
+#define PL_dirty dirty
+
+#endif
+
+
 
 DBISTATE_DECLARE;
 
@@ -36,16 +47,16 @@ static CS_RETCODE CS_PUBLIC clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIE
 static CS_RETCODE CS_PUBLIC servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
 static CS_COMMAND *syb_alloc_cmd _((CS_CONNECTION*));
 static void dealloc_dynamic _((imp_sth_t *));
-static int map_types _((int));
+static int map_syb_types _((int));
+static int map_sql_types _((int));
 static CS_CONNECTION *syb_db_connect _((struct imp_dbh_st *));
 static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
+static int syb_st_describe_proc _((imp_sth_t *, char *));
 
 
 static CS_CONTEXT *context;
 static char scriptName[255];
 static char *ocVersion;
-
-static imp_dbh_t *DBH;
 
 static CS_RETCODE CS_PUBLIC
 clientmsg_cb(context, connection, errmsg)
@@ -55,6 +66,8 @@ CS_CLIENTMSG	*errmsg;
 {
     imp_dbh_t *imp_dbh = NULL;
     char buff[255];
+
+/*    fprintf(stderr, "OC: %s\n", errmsg->msgstring); */
 
     if(connection) {
 	if((ct_con_props(connection, CS_GET, CS_USERDATA,
@@ -68,8 +81,6 @@ CS_CLIENTMSG	*errmsg;
 
 	if(imp_dbh->err_handler) {
 	    dSP;
-	    SV *sv, **svp;
-	    HV *hv;
 	    int retval, count;
 	    
 	    ENTER;
@@ -181,8 +192,6 @@ CS_SERVERMSG	*srvmsg;
 
     if(imp_dbh->err_handler) {
 	dSP;
-	SV *sv, **svp;
-	HV *hv;
 	int retval, count;
 
 	ENTER;
@@ -453,10 +462,10 @@ void syb_init(dbistate)
     dbistate_t *dbistate;
 {
     SV 		*sv;
-    CS_RETCODE	retcode;
     CS_INT	netio_type = CS_SYNC_IO;
     STRLEN      lna;
     CS_INT      outlen;
+    CS_RETCODE  retcode;
 
     DBIS = dbistate;
 
@@ -481,6 +490,12 @@ void syb_init(dbistate)
 			    CS_UNUSED, NULL)) != CS_SUCCEED)
 	croak("DBD::Sybase initialize: ct_config(netio) failed");
 
+#if defined(MAX_CONNECT)
+    netio_type = MAX_CONNECT;
+    if((retcode = ct_config(context, CS_SET, CS_MAX_CONNECT, &netio_type, 
+			    CS_UNUSED, NULL)) != CS_SUCCEED)
+	croak("DBD::Sybase initialize: ct_config(max_connect) failed");
+#endif
 
     {
 	char out[1024], *p;
@@ -559,7 +574,6 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     char       *pwd;
 {
     dTHR;
-    int len;
 
     imp_dbh->server[0]     = 0;
     imp_dbh->charset[0]    = 0;
@@ -571,6 +585,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->hostname[0]   = 0;
     imp_dbh->scriptName[0] = 0;
     imp_dbh->database[0]   = 0;
+    imp_dbh->encryptPassword[0]   = 0;
     imp_dbh->showSql       = 0;
     imp_dbh->showEed       = 0;
     imp_dbh->flushFinish   = 0;
@@ -594,6 +609,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	extractFromDsn("scriptName=", dsn, imp_dbh->scriptName, 255);
 	extractFromDsn("hostname=", dsn, imp_dbh->hostname, 255);
 	extractFromDsn("tdsLevel=", dsn, imp_dbh->tdsLevel, 30);
+	extractFromDsn("encryptPassword=", dsn, imp_dbh->encryptPassword, 10);
     } else {
 	strcpy(imp_dbh->server, dsn);
     }
@@ -610,8 +626,6 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
 
     DBIc_LongReadLen(imp_dbh) = 32768;
-
-    DBH = imp_dbh;
 
     return 1;
 }
@@ -804,6 +818,19 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
     }
+    if(retcode == CS_SUCCEED)
+    {
+	if(imp_dbh->encryptPassword[0] != 0) {
+	    int i = CS_TRUE;
+	    if((retcode = ct_con_props(connection, CS_SET, CS_SEC_ENCRYPTION, 
+				       (CS_VOID*)&i,
+				       CS_UNUSED, (CS_INT*)NULL)) != CS_SUCCEED)
+	    {
+		warn("ct_con_props(CS_SEC_ENCRYPTION, true) failed");
+		return 0;
+	    }
+	}
+    }
     if (retcode == CS_SUCCEED)
     {
 	len = *imp_dbh->server == 0 ? 0 : CS_NULLTERM;
@@ -936,6 +963,7 @@ int      syb_discon_all(drh, imp_drh)
     SV *drh;
     imp_drh_t *imp_drh;
 {
+    /* disconnect_all is not implemented */
     return 1;
 }
 
@@ -1141,7 +1169,6 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     SV *valuesv;
 {
     STRLEN kl;
-    STRLEN plen;
     int on;
     char *key = SvPV(keysv,kl);
 
@@ -1267,6 +1294,16 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	return TRUE;
     }
+    if (kl == 16 && strEQ(key, "syb_row_callback")) {
+	if(valuesv == &sv_undef) {
+	    imp_dbh->row_cb = NULL;
+	} else if(imp_dbh->row_cb == (SV*)NULL) {
+	    imp_dbh->row_cb = newSVsv(valuesv);
+	} else {
+	    sv_setsv(imp_dbh->row_cb, valuesv);
+	}
+	return TRUE;
+    }
     if (kl == 16 && strEQ(key, "syb_flush_finish")) {
 	on = SvTRUE(valuesv);
 	if(on) {
@@ -1323,6 +1360,25 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	return TRUE;
     }
+    if (kl == 18 && strEQ(key, "syb_deadlock_retry")) {
+	int value = SvIV(valuesv);
+	imp_dbh->deadlockRetry = value;
+
+	return TRUE;
+    }
+    if (kl == 18 && strEQ(key, "syb_deadlock_sleep")) {
+	int value = SvIV(valuesv);
+	imp_dbh->deadlockSleep = value;
+
+	return TRUE;
+    }
+    if (kl == 20 && strEQ(key, "syb_deadlock_verbose")) {
+	int value = SvIV(valuesv);
+	imp_dbh->deadlockVerbose = value;
+
+	return TRUE;
+    }
+
     return FALSE;
 }
 
@@ -1332,9 +1388,7 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     SV *keysv;
 {
     STRLEN kl;
-    STRLEN plen;
     char *key = SvPV(keysv,kl);
-    int on;
     SV *retsv = NULL;
 
     if (kl == 10 && strEQ(key, "AutoCommit")) {
@@ -1373,6 +1427,13 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     if (kl == 15 && strEQ(key, "syb_err_handler")) {
 	if(imp_dbh->err_handler) {
 	    retsv = newSVsv(imp_dbh->err_handler);
+	} else {
+	    retsv = &sv_undef;
+	}
+    }
+    if (kl == 16 && strEQ(key, "syb_row_callback")) {
+	if(imp_dbh->row_cb) {
+	    retsv = newSVsv(imp_dbh->row_cb);
 	} else {
 	    retsv = &sv_undef;
 	}
@@ -1431,11 +1492,21 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = newSViv(0);
     }
     if (kl == 17 && strEQ(key, "syb_binary_images")) {
-	if(imp_dbh->useBin0x) 
+	if(imp_dbh->binaryImage) 
 	    retsv = newSViv(1);
 	else
 	    retsv = newSViv(0);
     }
+    if (kl == 18 && strEQ(key, "syb_deadlock_retry")) {
+	retsv = newSViv(imp_dbh->deadlockRetry);
+    }
+    if (kl == 18 && strEQ(key, "syb_deadlock_sleep")) {
+	retsv = newSViv(imp_dbh->deadlockSleep);
+    }
+    if (kl == 20 && strEQ(key, "syb_deadlock_verbose")) {
+	retsv = newSViv(imp_dbh->deadlockVerbose);
+    }
+
     return retsv;
 }
 
@@ -1443,8 +1514,8 @@ static CS_COMMAND *
 syb_alloc_cmd(connection) 
     CS_CONNECTION *connection;
 {
-    CS_RETCODE retcode;
     CS_COMMAND *cmd;
+    CS_RETCODE retcode;
 
     if((retcode = ct_cmd_alloc(connection, &cmd)) != CS_SUCCEED) {
 	warn("ct_cmd_alloc failed");
@@ -1458,7 +1529,7 @@ dbd_preparse(imp_sth, statement)
     imp_sth_t *imp_sth;
     char *statement;
 {
-    enum { DEFAULT, LITERAL, COMMENT, LINE_COMMENT } STATES;
+    enum { DEFAULT, LITERAL, COMMENT, LINE_COMMENT, VARIABLE } STATES;
     int state = DEFAULT;
     int next_state;
     char last_literal = 0;
@@ -1467,20 +1538,35 @@ dbd_preparse(imp_sth, statement)
     SV *phs_sv;
     int idx=0;
     STRLEN namelen;
+    char varname[34];
+    int pos;
 
     /* allocate room for copy of statement with spare capacity	*/
     imp_sth->statement = (char*)safemalloc(strlen(statement) * 3);
 
     /* initialise phs ready to be cloned per placeholder	*/
     memset(&phs_tpl, 0, sizeof(phs_tpl));
-    phs_tpl.ftype = CS_VARCHAR_TYPE;	/* VARCHAR2 */
+    phs_tpl.ftype = CS_VARCHAR_TYPE;
+    varname[0] = 0;
+
+    /* check for a leading EXEC. If it is present then set imp_sth->type
+       to 1 to indicate that we are doing an RPC call.
+    */
+
+    src  = statement;
+    while(isspace(*src) && *src) /* skip over leading whitespace */
+	++src;
+    if(!strncasecmp(src, "exec", 4))
+	imp_sth->type = 1;
+    else 
+	imp_sth->type = 0;
 
     src  = statement;
     dest = imp_sth->statement;
     while(*src) {
 	next_state = state;	/* default situation */
 	switch(state) {
-	case DEFAULT:
+	  case DEFAULT:
 	    if(*src == '\'' || *src == '"') {
 		last_literal = *src;
 		next_state = LITERAL;
@@ -1488,23 +1574,34 @@ dbd_preparse(imp_sth, statement)
 		next_state = COMMENT;
 	    } else if(*src == '-' && *(src+1) == '-') {
 		next_state = LINE_COMMENT;
+	    } else if(*src == '@') {
+		varname[0] = '@';
+		pos = 1;
+		next_state = VARIABLE;
 	    }
 	    break;
-	case LITERAL:
+	  case LITERAL:
 	    if(*src == last_literal) {
 		next_state = DEFAULT;
 	    }
 	    break;
-	case COMMENT:
+	  case COMMENT:
 	    if(*(src-1) == '*' && *src == '/') {
 		next_state = DEFAULT;
 	    }
 	    break;
-	case LINE_COMMENT:
+	  case LINE_COMMENT:
 	    if(*src == '\n') {
 		next_state = DEFAULT;
 	    }
 	    break;
+	  case VARIABLE:
+	    if(!isalnum(*src) && *src != '_') {
+		varname[pos] = 0;
+		next_state = DEFAULT;
+	    } else if(pos < 33) {
+		varname[pos++] = *src;
+	    }
 	}
 /*	printf("state = %d, *src = %c, next_state = %d\n", state, *src, next_state); */
 
@@ -1530,6 +1627,24 @@ dbd_preparse(imp_sth, statement)
 	phs_sv = newSVpv((char*)&phs_tpl, sizeof(phs_tpl)+namelen+1);
 	hv_store(imp_sth->all_params_hv, start, namelen, phs_sv, 0);
 	strcpy( ((phs_t*)(void*)SvPVX(phs_sv))->name, start);
+	strcpy( ((phs_t*)(void*)SvPVX(phs_sv))->varname, varname);
+	if(imp_sth->type == 1) { /* if it's an EXEC call, check for OUTPUT */
+	    char *p = src;
+	    do {
+		if(*p == ',')
+		    break;
+		if(isspace(*p))
+		    continue;
+		if(isalpha(*p)) {
+		    if(!strncasecmp(p, "out", 3)) {
+			((phs_t*)(void*)SvPVX(phs_sv))->is_inout = 1;
+		    }
+		}
+	    } while(*(++p));
+	}
+	if (dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    dbd_preparse parameter %s (%s)\n",
+		    start, varname);
 	/* warn("params_hv: '%s'\n", start);	*/
     }
     *dest = '\0';
@@ -1585,71 +1700,90 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     dbd_preparse(imp_sth, statement);
 	
     if((int)DBIc_NUM_PARAMS(imp_sth)) {
-	CS_INT restype;
-	static int tt = 1; 
-	int failed = 0;
-	CS_BOOL val;
-
-	ret = ct_capability(imp_dbh->connection, CS_GET, CS_CAP_REQUEST,
-			    CS_REQ_DYN, (CS_VOID*)&val);
-	if(ret != CS_SUCCEED || val == CS_FALSE)
-	    croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
-
-	sprintf(imp_sth->dyn_id, "DBD%x", (int)tt++);
-
-	if (dbis->debug >= 2)
-	    fprintf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
-		    imp_sth->dyn_id);
-
-	imp_sth->dyn_execed = 0;
-
-	imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
-				     imp_sth->connection :
-				     imp_dbh->connection);
-
-	ret = ct_dynamic(imp_sth->cmd, CS_PREPARE, imp_sth->dyn_id,
-			 CS_NULLTERM, statement, CS_NULLTERM);
-	if(ret != CS_SUCCEED) {
-	    return 0;
-	}
-	ret = ct_send(imp_sth->cmd);
-	if(ret != CS_SUCCEED) {
-	    return 0;
-	}
-	while((ret = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED)
-	    if(restype == CS_CMD_FAIL)
-		failed = 1;
-
-	if(ret == CS_FAIL || failed) {
-	    return 0;
-	}
-	ret = ct_dynamic(imp_sth->cmd, CS_DESCRIBE_INPUT, imp_sth->dyn_id,
-			 CS_NULLTERM, NULL, CS_UNUSED);
-	ret = ct_send(imp_sth->cmd);
-	while((ret = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED) {
-	    if(restype == CS_DESCRIBE_RESULT) {
-		CS_INT num_param, outlen;
-		int i;
-		char name[50];
-		SV **svp;
-		phs_t *phs;
-
-		ct_res_info(imp_sth->cmd, CS_NUMDATA, &num_param, CS_UNUSED,
-			    &outlen);
-		for(i = 1; i <= num_param; ++i) {
-		    sprintf(name, ":p%d", i);
-		    svp = hv_fetch(imp_sth->all_params_hv, name, strlen(name), 0);
-		    phs = ((phs_t*)(void*)SvPVX(*svp));
-		    ct_describe(imp_sth->cmd, i, &phs->datafmt);
+	/* regular dynamic sql */
+	if(imp_sth->type == 0) {
+	    CS_INT restype;
+	    static int tt = 1; 
+	    int failed = 0;
+	    CS_BOOL val;
+	    
+	    ret = ct_capability(imp_dbh->connection, CS_GET, CS_CAP_REQUEST,
+				CS_REQ_DYN, (CS_VOID*)&val);
+	    if(ret != CS_SUCCEED || val == CS_FALSE)
+		croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
+	    
+	    sprintf(imp_sth->dyn_id, "DBD%x", (int)tt++);
+	    
+	    if (dbis->debug >= 2)
+		fprintf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
+			imp_sth->dyn_id);
+	    
+	    imp_sth->dyn_execed = 0;
+	    
+	    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+					 imp_sth->connection :
+					 imp_dbh->connection);
+	    
+	    ret = ct_dynamic(imp_sth->cmd, CS_PREPARE, imp_sth->dyn_id,
+			     CS_NULLTERM, statement, CS_NULLTERM);
+	    if(ret != CS_SUCCEED) {
+		return 0;
+	    }
+	    ret = ct_send(imp_sth->cmd);
+	    if(ret != CS_SUCCEED) {
+		return 0;
+	    }
+	    while((ret = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED)
+		if(restype == CS_CMD_FAIL)
+		    failed = 1;
+	    
+	    if(ret == CS_FAIL || failed) {
+		return 0;
+	    }
+	    ret = ct_dynamic(imp_sth->cmd, CS_DESCRIBE_INPUT, imp_sth->dyn_id,
+			     CS_NULLTERM, NULL, CS_UNUSED);
+	    ret = ct_send(imp_sth->cmd);
+	    while((ret = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED) {
+		if(restype == CS_DESCRIBE_RESULT) {
+		    CS_INT num_param, outlen;
+		    int i;
+		    char name[50];
+		    SV **svp;
+		    phs_t *phs;
+		    
+		    ct_res_info(imp_sth->cmd, CS_NUMDATA, &num_param, CS_UNUSED,
+				&outlen);
+		    for(i = 1; i <= num_param; ++i) {
+			sprintf(name, ":p%d", i);
+			svp = hv_fetch(imp_sth->all_params_hv, name, strlen(name), 0);
+			phs = ((phs_t*)(void*)SvPVX(*svp));
+			ct_describe(imp_sth->cmd, i, &phs->datafmt);
+		    }
 		}
 	    }
-	}
-	if(ct_dynamic(imp_sth->cmd, CS_EXECUTE, imp_sth->dyn_id, CS_NULLTERM,
-			 NULL, CS_UNUSED) != CS_SUCCEED)
-	    ret = CS_FAIL;
-	else {
+	    if(ct_dynamic(imp_sth->cmd, CS_EXECUTE, imp_sth->dyn_id, CS_NULLTERM,
+			  NULL, CS_UNUSED) != CS_SUCCEED)
+		ret = CS_FAIL;
+	    else {
+		ret = CS_SUCCEED;
+		imp_sth->dyn_execed = 1;
+	    }
+	} else {
+	    /* RPC call - get the proc name */
+	    /* We could possibly get the proc params from syscolumns, but
+	        there are a lot of issues with that which will break it */
+	    if(!syb_st_describe_proc(imp_sth, statement)) {
+		croak("DBD::Sybase: describe_proc failed!\n");
+	    }
+	    if (dbis->debug >= 2)
+		fprintf(DBILOGFP, "    describe_proc: procname = %s\n", 
+			imp_sth->proc);
+
+	    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
+					 imp_sth->connection :
+					 imp_dbh->connection);
 	    ret = CS_SUCCEED;
-	    imp_sth->dyn_execed = 1;
+	    imp_sth->dyn_execed = 0;
 	}
     } else {
 	/* delay the ct_command() to the syb_st_execute() call */
@@ -1667,6 +1801,94 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     return 1;
 }
 
+static int syb_st_describe_proc(imp_sth, statement)
+    imp_sth_t *imp_sth;
+    char *statement;
+{ 
+    char *buff = strdup(statement);
+    char *tok;
+
+    tok = strtok(buff, " \n\t");
+    if(strncasecmp(tok, "exec", 4)) {
+	return 0;		/* it's gotta start with exec(ute) */
+    }
+    tok = strtok(NULL, " \n\t"); /* this is the proc name */
+    if(!tok || !*tok) {
+	warn("DBD::Sybase: describe_proc: didn't get a proc name in EXEC statement\n");
+	return 0;
+    }
+    strcpy(imp_sth->proc, tok);
+    free(buff);
+    return 1;
+
+
+/* ahem. this stuff really doesn't work yet */
+#if 0
+    char buff[256];
+    char *db = "";
+    char *owner = "dbo";
+    char *proc;
+    char *p, *q;
+    char sql[256];
+
+    /* statement should be in the form
+       exec db.owner.proc ...
+       db and owner are both optional */
+    
+    strncpy(statement, buff, 255);
+    p = &buff[0];
+    while(isspace(*p) && *p)
+	++p;
+    while(!isspace(*p) && *p)
+	++p;			/* skip over exec(ute) */
+    while(isspace(*p) && *p)
+	++p;			/* skip over any additional space... */
+    /* now put a \0 byte at the end of the proc name */
+    q = p;
+    while(!isspace(*q) && *q)
+	++q;
+    *q = 0;
+    /* if there is no . then we have the proc name... */
+    if(!(q = strchr(p, '.'))) {
+	proc = p;
+	db = "";
+	owner = "dbo";
+    } else {
+	*q++ = 0;
+	db = p;
+	p = q;
+	if((q = strchr(p, '.'))) {
+	    *q++ = 0;
+	    owner = p;
+	    proc = q;
+	}
+	if(!*owner)
+	    owner = "dbo";
+    }
+    fprintf(DBILOGFP, " describe_proc: %s %s %s\n", db, owner, proc);
+
+    if(db && *db) {
+	sprintf(sql, "
+select c.colid, c.name, c.usertype, c.prec, c.scale 
+ from %s..sysobjects o, %s..syscolumns c, %s..sysusers u
+ where c.id = o.id 
+   and o.name = '%s'
+   and o.type = 'P'
+   and o.uid = u.uid
+   and u.name = '%s'
+", db, db, db, proc, owner);
+    } else {
+	sprintf(sql, "
+select c.colid, c.name, c.usertype, c.prec, c.scale 
+ from sysobjects o, syscolumns c
+ where c.id = o.id 
+   and o.name = '%s'
+   and o.type = 'P'
+   and o.uid = user_id(u.uid
+   and u.name = '%s'", proc, owner);
+    }
+#endif    
+}
 
 int      syb_st_rows(sth, imp_sth)
     SV *sth;
@@ -1820,10 +2042,12 @@ describe(imp_sth, restype)
 		imp_sth->coldata[i].type     = CS_TEXT_TYPE;
 		imp_sth->datafmt[i].datatype = CS_TEXT_TYPE;
 	    }
-	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
-			      imp_sth->coldata[i].value.c,
-			      &imp_sth->coldata[i].valuelen,
-			      &imp_sth->coldata[i].indicator);
+	    if(!imp_sth->noBindBlob) {
+		retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+				  imp_sth->coldata[i].value.c,
+				  &imp_sth->coldata[i].valuelen,
+				  &imp_sth->coldata[i].indicator);
+	    }
 	    break;
 	    
 	  case CS_CHAR_TYPE:
@@ -1937,7 +2161,7 @@ st_next_result(sth, imp_sth)
 	}
     }
     if(dbis->debug >= 2)
-	fprintf(DBILOGFP, "ct_execute() final retcode = %d\n", retcode);
+	fprintf(DBILOGFP, "ct_results() final retcode = %d\n", retcode);
   Done:
 
     /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
@@ -2062,7 +2286,6 @@ syb_st_fetch(sth, imp_sth)
     dTHR;
     D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
-    int debug = DBIS->debug;
     int num_fields;
     int ChopBlanks;
     int i;
@@ -2119,10 +2342,17 @@ syb_st_fetch(sth, imp_sth)
       case CS_SUCCEED:
 	for(i = 0; i < num_fields; ++i)
 	{
-	    SV *sv = AvARRAY(av)[i]; /* Note: we (re)use the SV in the AV	*/
+	    SV *sv = AvARRAY(av)[i]; /* Note: we (re)use the SV in the AV   */
 	    len = 0;
 
-	    if(i >= imp_sth->numCols || imp_sth->coldata[i].indicator == CS_NULLDATA) {
+	    /* If we're beyond the number of items in this result set
+	       or: the data is null
+	       or: noBindBlob is set and the data type is IMAGE or TEXT
+	       then: set sv to undef */
+	    if(i >= imp_sth->numCols || 
+	       imp_sth->coldata[i].indicator == CS_NULLDATA ||
+	       (imp_sth->noBindBlob && (imp_sth->datafmt[i].datatype == CS_TEXT_TYPE
+					|| imp_sth->datafmt[i].datatype == CS_IMAGE_TYPE))) {
 		/* NULL data */
 		(void)SvOK_off(sv);
 	    } else {
@@ -2165,7 +2395,7 @@ syb_st_fetch(sth, imp_sth)
 		     break;
 		  default:
 		    croak("syb_st_fetch: unknown datatype: %d, column %d",
-			  imp_sth->datafmt[i].datatype, i);
+			  imp_sth->datafmt[i].datatype, i + 1);
 		}
 	    }
 	}
@@ -2206,6 +2436,33 @@ syb_st_fetch(sth, imp_sth)
 	warn("ct_fetch() returned an unexpected retcode");
     }
 
+    if(imp_dbh->row_cb) {
+	dSP;
+	int retval, count;
+	
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(sp);
+	
+	
+	XPUSHs(sv_2mortal(newRV((SV*)av)));
+	
+	PUTBACK;
+	if((count = perl_call_sv(imp_dbh->row_cb, G_SCALAR)) != 1)
+	    croak("An error handler can't return a LIST.");
+	SPAGAIN;
+	retval = POPi;
+	
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	
+	/* If the called sub returns 0 then we don't return the result set
+	   to the caller, so instead try to fetch the next row... */
+	if(retval == 0)
+	    goto TryAgain;
+    }
+
     return av;
 }
 
@@ -2226,7 +2483,7 @@ int      syb_st_finish(sth, imp_sth)
 	    fprintf(DBILOGFP, "    syb_st_finish() -> flushing\n");
 	while (DBIc_ACTIVE(imp_sth))
 	    while (syb_st_fetch(sth, imp_sth))
-		1;
+		;
     }
     else {
 	if (DBIc_ACTIVE(imp_sth)) {
@@ -2303,9 +2560,16 @@ void     syb_st_destroy(sth, imp_sth)
 {
     D_imp_dbh_from_sth;
     CS_RETCODE ret;
+    dTHR;
 
     if (dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_st_destroy: called on %x...\n", imp_sth);
+
+    if (PL_dirty) {
+	if (dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_destroy: dirty set, skipping\n");
+	return;
+    }
 
     if (DBIc_ACTIVE(imp_dbh))
 	if(!strncmp(imp_sth->dyn_id, "DBD", 3)) {
@@ -2328,8 +2592,12 @@ void     syb_st_destroy(sth, imp_sth)
     if(dbis->debug >= 2) {
 	fprintf(DBILOGFP, "    syb_st_destroy(): cmd dropped: %d\n", ret);
     }
-    if(imp_sth->connection)
-	ct_close(imp_sth->connection, CS_FORCE_CLOSE);
+    if(imp_sth->connection) {
+	ret = ct_close(imp_sth->connection, CS_FORCE_CLOSE);
+	if(dbis->debug >= 2) {
+	    fprintf(DBILOGFP, "    syb_st_destroy(): connection closed: %d\n", ret);
+	}
+    }
 
     DBIc_IMPSET_off(imp_sth);		/* let DBI know we've done it	*/
 }
@@ -2346,6 +2614,191 @@ int      syb_st_blob_read(sth, imp_sth, field, offset, len,
 {
   return 1;
 }
+
+int      syb_ct_get_data(sth, imp_sth, column, bufrv, buflen)
+    SV *sth;
+    imp_sth_t *imp_sth;
+    int column;
+    SV *bufrv;
+    int buflen;
+{
+    CS_COMMAND *cmd = imp_sth->cmd;
+    CS_VOID *buffer; 
+/*    CS_INT buflen = imp_sth->datafmt[column-1].maxlength; */
+    CS_INT outlen;
+    CS_RETCODE ret;
+    SV *bufsv;
+
+    if(buflen == 0)
+	buflen = imp_sth->datafmt[column-1].maxlength;
+
+    if(dbis->debug >= 3)
+	fprintf(DBILOGFP, "    ct_get_data(%d): buflen = %d\n",
+		column, buflen);
+
+    bufsv = SvRV(bufrv);
+    buffer = Newz(902, buffer, buflen, char);
+
+    ret = ct_get_data(cmd, column, (CS_VOID*)buffer, buflen, &outlen);
+    if(outlen) {
+	sv_setpvn(bufsv, buffer, outlen);
+    } else {
+	sv_setsv(bufsv, &PL_sv_undef);
+    }
+    if(dbis->debug >= 3)
+	fprintf(DBILOGFP, "    ct_get_data(%d): got %d bytes (ret = %d)\n",
+		column, outlen, ret);
+
+    Safefree(buffer);
+
+    return outlen;
+}
+
+int      syb_ct_prepare_send(sth, imp_sth)
+    SV *sth;
+    imp_sth_t *imp_sth;
+{
+    return ct_command(imp_sth->cmd, CS_SEND_DATA_CMD, NULL, CS_UNUSED, CS_COLUMN_DATA) == CS_SUCCEED;
+}
+
+int      syb_ct_finish_send(sth, imp_sth)
+    SV *sth;
+    imp_sth_t *imp_sth;
+{
+    CS_RETCODE retcode;
+    CS_INT restype;
+    D_imp_dbh_from_sth;
+     
+
+    retcode = ct_send(imp_sth->cmd);
+    if(dbis->debug >= 3)
+	fprintf(DBILOGFP, "    ct_finish_send(): ct_send() = %d\n",
+		retcode);
+    if(retcode != CS_SUCCEED) {
+	return 0;
+    }
+
+    while((retcode = ct_results(imp_sth->cmd, &restype)) == CS_SUCCEED) {
+	if(dbis->debug >= 3)
+	    fprintf(DBILOGFP, "    ct_finish_send(): ct_results(%d) = %d\n",
+		    restype, retcode);
+	if(restype == CS_PARAM_RESULT) {
+	    CS_DATAFMT datafmt;
+	    CS_INT count;
+
+	    retcode = ct_describe(imp_sth->cmd, 1, &datafmt);
+	    if(retcode != CS_SUCCEED) {
+		if(dbis->debug >= 3)
+		    fprintf(DBILOGFP, "    ct_finish_send(): ct_describe() failed\n");
+		return 0;
+	    }
+	    datafmt.maxlength = sizeof(imp_dbh->iodesc.timestamp);
+	    datafmt.format     = CS_FMT_UNUSED;
+	    if((retcode = ct_bind(imp_sth->cmd, 1, &datafmt, 
+				  (CS_VOID *)imp_dbh->iodesc.timestamp,
+				  &imp_dbh->iodesc.timestamplen,
+				  NULL)) != CS_SUCCEED) {
+		if(dbis->debug >= 3)
+		    fprintf(DBILOGFP, "    ct_finish_send(): ct_bind() failed\n");
+		return 0;
+	    }
+	    retcode = ct_fetch(imp_sth->cmd, CS_UNUSED, CS_UNUSED, 
+			       CS_UNUSED, &count);
+	    if(retcode != CS_SUCCEED) {
+		if(dbis->debug >= 3)
+		    fprintf(DBILOGFP, "    ct_finish_send(): ct_fetch() failed\n");
+		return 0;
+	    }
+	    /* success... so cancel the rest of this result set */
+
+	    retcode = ct_cancel(NULL, imp_sth->cmd, CS_CANCEL_CURRENT);
+	    if(retcode != CS_SUCCEED) {
+		if(dbis->debug >= 3)
+		    fprintf(DBILOGFP, "    ct_finish_send(): ct_fetch() failed\n");
+		return 0;
+	    }
+	}
+    }
+
+    return 1;
+}		
+
+int      syb_ct_send_data(sth, imp_sth, buffer, size)
+    SV *sth;
+    imp_sth_t *imp_sth;
+    char *buffer;
+    int size;
+{
+    if(dbis->debug >= 3)
+	fprintf(DBILOGFP, "    ct_send_data(): sending buffer size %d bytes\n",
+		size);
+    return ct_send_data(imp_sth->cmd, buffer, size) == CS_SUCCEED;
+}
+
+int      syb_ct_data_info(sth, imp_sth, action, column, attr)
+    SV *sth;
+    imp_sth_t *imp_sth;
+    int column;
+    int action;
+    SV *attr;
+{
+    D_imp_dbh_from_sth;
+    CS_COMMAND *cmd = imp_sth->cmd;
+    CS_RETCODE ret;
+
+    if(action == CS_SET) {
+	/* we expect the app to maybe modify certain fields of the CS_IODESC
+	   struct. This is done via the attr hash that is passed in here */
+	if(attr && attr != &PL_sv_undef && SvROK(attr)) {
+	    SV **svp;
+
+	    svp = hv_fetch((HV*)SvRV(attr), "total_txtlen", 12, 0);
+	    if (svp && SvGMAGICAL(*svp))   /* eg if from tainted expression */
+		mg_get(*svp);
+	    if(svp && SvIOK(*svp))
+		imp_dbh->iodesc.total_txtlen = SvIV(*svp);
+
+	    if(dbis->debug >= 3)
+		fprintf(DBILOGFP, "    ct_data_info(): set total_txtlen to %d\n",
+			imp_dbh->iodesc.total_txtlen);
+
+
+	    svp = hv_fetch((HV*)SvRV(attr), "log_on_update", 13, 0);
+	    if (svp && SvGMAGICAL(*svp))   /* eg if from tainted expression */
+		mg_get(*svp);
+	    if(svp && SvIOK(*svp))
+		imp_dbh->iodesc.log_on_update = SvIV(*svp);
+	    if(dbis->debug >= 3)
+		fprintf(DBILOGFP, "    ct_data_info(): set log_on_update to %d\n",
+			imp_dbh->iodesc.log_on_update);
+	}
+    }
+
+    if(action == CS_SET) {
+	column = CS_UNUSED;
+    } else {
+	if(dbis->debug >= 3)
+	    fprintf(DBILOGFP, "    ct_data_info(): get IODESC for column %d\n",
+		    column);
+    }
+
+    ret = ct_data_info(cmd, action, column, &imp_dbh->iodesc);
+
+    if(action == CS_GET && dbis->debug >= 3) {
+	fprintf(DBILOGFP, "    ct_data_info(): ret = %d, total_txtlen = %d\n",
+		ret, imp_dbh->iodesc.total_txtlen);
+    } else if(dbis->debug >= 3) {
+	fprintf(DBILOGFP, "    ct_data_info(): ret = %d\n",
+		ret);
+    }
+
+    return ret == CS_SUCCEED;
+}
+
+
+
+
+
 
 
 /* Borrowed from DBD::ODBC */
@@ -2374,12 +2827,14 @@ static T_st_params S_st_fetch_params[] =
     s_A("LongReadLen"),         /* 11 */
     s_A("syb_proc_status"),     /* 12 */
     s_A("syb_do_proc_status"),  /* 13 */
+    s_A("syb_no_bind_blob"),    /* 14 */
     s_A(""),			/* END */
 };
 
 static T_st_params S_st_store_params[] = 
 {
-    s_A("syb_do_proc_status"),  /* 1 */
+    s_A("syb_do_proc_status"),  /* 0 */
+    s_A("syb_no_bind_blob"),    /* 1 */
     s_A(""),			/* END */
 };
 #undef s_A
@@ -2395,9 +2850,6 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
     int i;
     SV *retsv = NULL;
     T_st_params *par;
-    int n_fields;
-    imp_fbh_t *fbh;
-    int rc;
 
     for (par = S_st_fetch_params; par->len > 0; par++)
 	if (par->len == kl && strEQ(key, par->str))
@@ -2417,83 +2869,86 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
     switch(par - S_st_fetch_params) {  
 	AV *av;
 
-	case 0:			/* NUM_OF_PARAMS */
-	    return Nullsv;	/* handled by DBI */
-        case 1:			/* NUM_OF_FIELDS */
-	    retsv = newSViv(i);
-	    break;
-	case 2: 			/* NAME */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0)
-		av_store(av, i, newSVpv(imp_sth->datafmt[i].name, 0));
-	    break;
-	case 3:			/* NULLABLE */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0)
-		av_store(av, i,
-		    (imp_sth->datafmt[i].status & CS_CANBENULL)
-			? &sv_yes : &sv_no);
-	    break;
-	case 4:			/* TYPE */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0) 
-		av_store(av, i, newSViv(map_types(imp_sth->coldata[i].realType)));
-	    break;
-        case 5:			/* PRECISION */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0) 
-		av_store(av, i, newSViv(imp_sth->datafmt[i].precision ?
-		    imp_sth->datafmt[i].precision :
-		    imp_sth->coldata[i].realLength));
-	    break;
-	case 6:			/* SCALE */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0) {
-		switch(imp_sth->coldata[i].realType) {
-		case CS_NUMERIC_TYPE:
-		case CS_DECIMAL_TYPE:
-		    av_store(av, i, newSViv(imp_sth->datafmt[i].scale));
-		    break;
-		default:
-		    av_store(av, i, newSVsv(&sv_undef));
-		}
+      case 0:			/* NUM_OF_PARAMS */
+	return Nullsv;	/* handled by DBI */
+      case 1:			/* NUM_OF_FIELDS */
+	retsv = newSViv(i);
+	break;
+      case 2: 			/* NAME */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0)
+	    av_store(av, i, newSVpv(imp_sth->datafmt[i].name, 0));
+	break;
+      case 3:			/* NULLABLE */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0)
+	    av_store(av, i,
+		     (imp_sth->datafmt[i].status & CS_CANBENULL)
+		     ? &sv_yes : &sv_no);
+	break;
+      case 4:			/* TYPE */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0) 
+	    av_store(av, i, newSViv(map_syb_types(imp_sth->coldata[i].realType)));
+	break;
+      case 5:			/* PRECISION */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0) 
+	    av_store(av, i, newSViv(imp_sth->datafmt[i].precision ?
+				    imp_sth->datafmt[i].precision :
+				    imp_sth->coldata[i].realLength));
+	break;
+      case 6:			/* SCALE */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0) {
+	    switch(imp_sth->coldata[i].realType) {
+	      case CS_NUMERIC_TYPE:
+	      case CS_DECIMAL_TYPE:
+		av_store(av, i, newSViv(imp_sth->datafmt[i].scale));
+		break;
+	      default:
+		av_store(av, i, newSVsv(&sv_undef));
 	    }
-	    break;
-	case 7:
-	    retsv = newSViv(imp_sth->moreResults);
-	    break;
-        case 8:
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0)
-		av_store(av, i, newSViv(imp_sth->coldata[i].realLength));
-	    break;
-	case 9:			/* syb_types: native datatypes */
-	    av = newAV();
-	    retsv = newRV(sv_2mortal((SV*)av));
-	    while(--i >= 0) 
-		av_store(av, i, newSViv(imp_sth->coldata[i].realType));
-	    break;
-	case 10:
-	    retsv = newSViv(imp_sth->lastResType);
-	    break;
-	case 11:
-	    retsv = newSViv(DBIc_LongReadLen(imp_sth));
-	    break;
-	case 12:
-	    retsv = newSViv(imp_sth->lastProcStatus);
-	    break;
-	case 13:
-	    retsv = newSViv(imp_sth->doProcStatus);
-	    break;
-	default:
-	    return Nullsv;
 	}
+	break;
+      case 7:
+	retsv = newSViv(imp_sth->moreResults);
+	break;
+      case 8:
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0)
+	    av_store(av, i, newSViv(imp_sth->coldata[i].realLength));
+	break;
+      case 9:			/* syb_types: native datatypes */
+	av = newAV();
+	retsv = newRV(sv_2mortal((SV*)av));
+	while(--i >= 0) 
+	    av_store(av, i, newSViv(imp_sth->coldata[i].realType));
+	break;
+      case 10:
+	retsv = newSViv(imp_sth->lastResType);
+	break;
+      case 11:
+	retsv = newSViv(DBIc_LongReadLen(imp_sth));
+	break;
+      case 12:
+	retsv = newSViv(imp_sth->lastProcStatus);
+	break;
+      case 13:
+	retsv = newSViv(imp_sth->doProcStatus);
+	break;
+      case 14:
+	retsv = newSViv(imp_sth->noBindBlob);
+	break;
+      default:
+	return Nullsv;
+    }
 
     return sv_2mortal(retsv);
 }
@@ -2509,7 +2964,6 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
     STRLEN kl;
     char *key = SvPV(keysv,kl);
     T_st_params *par;
-    int rc;
 
     if(dbis->debug >= 2) {
 	fprintf(DBILOGFP, "    syb_st_STORE(): key = %s\n", key);
@@ -2522,28 +2976,36 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
 
     if (par->len <= 0)
 	return FALSE;
-
+    
+    if(dbis->debug >= 2) {
+	fprintf(DBILOGFP, "    syb_st_STORE(): storing %d for key = %s\n", SvTRUE(valuesv), key);
+    }
     switch(par - S_st_store_params)
-	{
-	case 0 :
-	    if(dbis->debug >= 2) {
-		fprintf(DBILOGFP, "    syb_st_STORE(): storing %d for key = %s\n", SvTRUE(valuesv), key);
-	    }
-	    if(SvTRUE(valuesv)) {
-		imp_sth->doProcStatus = 1;
-	    } else {
-		imp_sth->doProcStatus = 0;
-	    }
-	    return TRUE;
+    {
+      case 0 :
+	if(SvTRUE(valuesv)) {
+	    imp_sth->doProcStatus = 1;
+	} else {
+	    imp_sth->doProcStatus = 0;
 	}
+	return TRUE;
+      case 1:
+	if(SvTRUE(valuesv)) {
+	    imp_sth->noBindBlob = 1;
+	} else {
+	    imp_sth->noBindBlob = 0;
+	}
+	return TRUE;
+    }
     return FALSE;
 }
 
 static CS_NUMERIC
-to_numeric(str, locale, datafmt)
+to_numeric(str, locale, datafmt, type)
     char *str;
     CS_LOCALE *locale;
     CS_DATAFMT *datafmt;
+    int type;
 {
     CS_NUMERIC mn;
     CS_DATAFMT srcfmt;
@@ -2561,32 +3023,40 @@ to_numeric(str, locale, datafmt)
     srcfmt.format    = CS_FMT_NULLTERM;
     srcfmt.locale    = locale;
 
+    if(type) {			/* RPC call */
+	if((p = strchr(str, '.')))
+	    datafmt->scale = strlen(p+1);
+	else
+	    datafmt->scale = 0;
+	datafmt->precision = strlen(str);
+    } else { /* dynamic SQL */
     /* If the number of digits after the . is larger than
        the 'scale' value in datafmt, then we need to adjust it. Otherwise
        the conversion fails */
-    if((p = strchr(str, '.'))) {
-	int len = strlen(++p);
-	if(len > datafmt->scale) {
-	    if(p[datafmt->scale] < '5')
-		p[datafmt->scale] = 0;
-	    else {
-		p[datafmt->scale] = 0;
-		len = strlen(str);
-		while(len--) {
-		    if(str[len] == '.')
-			continue;
-		    if(str[len] < '9') {
-			str[len]++;
-			break;
-		    }
-		    str[len] = '0';
-		    if(len == 0) {
-			char buf[64];
-			buf[0] = '1';
-			buf[1] = 0;
-			strcat(buf, str);
-			strcpy(str, buf);
-			break;
+	if((p = strchr(str, '.'))) {
+	    int len = strlen(++p);
+	    if(len > datafmt->scale) {
+		if(p[datafmt->scale] < '5')
+		    p[datafmt->scale] = 0;
+		else {
+		    p[datafmt->scale] = 0;
+		    len = strlen(str);
+		    while(len--) {
+			if(str[len] == '.')
+			    continue;
+			if(str[len] < '9') {
+			    str[len]++;
+			    break;
+			}
+			str[len] = '0';
+			if(len == 0) {
+			    char buf[64];
+			    buf[0] = '1';
+			    buf[1] = 0;
+			    strcat(buf, str);
+			    strcpy(str, buf);
+			    break;
+			}
 		    }
 		}
 	    }
@@ -2654,7 +3124,6 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     STRLEN value_len;
     int i_value;
     double d_value;
-    char *c_value;
     void *value;
     CS_NUMERIC n_value;
     CS_MONEY m_value;
@@ -2674,7 +3143,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     /* At the moment we always do sv_setsv() and rebind.        */
     /* Later we may optimise this so that more often we can     */
     /* just copy the value & length over and not rebind.        */
- 
+#if 0 
     if (phs->is_inout) {        /* XXX */
         if (SvREADONLY(phs->sv))
             croak(no_modify);
@@ -2688,6 +3157,10 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
         /* phs->sv is copy of real variable, upgrade to at least string */
         (void)SvUPGRADE(phs->sv, SVt_PV);
     }
+#else
+    /* phs->sv is copy of real variable, upgrade to at least string */
+    (void)SvUPGRADE(phs->sv, SVt_PV);
+#endif
  
     /* At this point phs->sv must be at least a PV with a valid buffer, */
     /* even if it's undef (null)                                        */
@@ -2698,40 +3171,46 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	/* determine the value, and length that we wish to pass to
 	   ct_param() */
 	switch(phs->datafmt.datatype) {
-	case CS_INT_TYPE:
-	case CS_SMALLINT_TYPE:
-	case CS_TINYINT_TYPE:
-	case CS_BIT_TYPE:
+	  case CS_INT_TYPE:
+	  case CS_SMALLINT_TYPE:
+	  case CS_TINYINT_TYPE:
+	  case CS_BIT_TYPE:
 	    phs->datafmt.datatype = CS_INT_TYPE;
 	    i_value = atoi(phs->sv_buf);
 	    value = &i_value;
 	    value_len = 4;
 	    break;
-	case CS_NUMERIC_TYPE:
-	case CS_DECIMAL_TYPE:
-	    n_value = to_numeric(phs->sv_buf, imp_dbh->locale, &phs->datafmt);
+	  case CS_NUMERIC_TYPE:
+	  case CS_DECIMAL_TYPE:
+	    n_value = to_numeric(phs->sv_buf, imp_dbh->locale, &phs->datafmt,
+				 imp_sth->type);
 	    phs->datafmt.datatype = CS_NUMERIC_TYPE;
 	    value = &n_value;
 	    value_len = sizeof(n_value);
 	    break;
-	case CS_MONEY_TYPE:
-	case CS_MONEY4_TYPE:
+	  case CS_MONEY_TYPE:
+	  case CS_MONEY4_TYPE:
 	    m_value = to_money(phs->sv_buf, imp_dbh->locale);
 	    phs->datafmt.datatype = CS_MONEY_TYPE;
 	    value = &m_value;
 	    value_len = sizeof(m_value);
 	    break;
-	case CS_REAL_TYPE:
-	case CS_FLOAT_TYPE:
+	  case CS_REAL_TYPE:
+	  case CS_FLOAT_TYPE:
 	    phs->datafmt.datatype = CS_FLOAT_TYPE;
 	    d_value = atof(phs->sv_buf);
 	    value = &d_value;
 	    value_len = sizeof(double);
 	    break;
-	default:
+	  case CS_BINARY_TYPE:
+	    phs->datafmt.datatype = CS_BINARY_TYPE;
+	    value = phs->sv_buf;
+	    break;
+	  default:
 	    phs->datafmt.datatype = CS_CHAR_TYPE;
 	    value = phs->sv_buf;
 	    value_len = CS_NULLTERM;
+/*	    phs->datafmt.maxlength = SvCUR(phs->sv); */
 	    break;
 	}
     } else {      /* it's null but point to buffer incase it's an out var */
@@ -2749,9 +3228,17 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     }
 
     if(imp_sth->dyn_execed == 0) {
-	if(ct_dynamic(imp_sth->cmd, CS_EXECUTE, imp_sth->dyn_id, CS_NULLTERM,
-		      NULL, CS_UNUSED) != CS_SUCCEED)
-	    return 0;
+	if(imp_sth->type == 0) {
+	    if(ct_dynamic(imp_sth->cmd, CS_EXECUTE, imp_sth->dyn_id, CS_NULLTERM,
+			  NULL, CS_UNUSED) != CS_SUCCEED)
+		return 0;
+	} else {
+	    if(ct_command(imp_sth->cmd, CS_RPC_CMD, imp_sth->proc, 
+			  CS_NULLTERM, CS_NO_RECOMPILE) != CS_SUCCEED) {
+		warn("ct_command(CS_RPC_CMD, %s) failed\n", imp_sth->proc);
+		return 0;
+	    }
+	}
 	imp_sth->dyn_execed = 1;
     }
 
@@ -2795,8 +3282,10 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 
     if (SvTYPE(newvalue) > SVt_PVLV)    /* hook for later array logic   */
         croak("Can't bind non-scalar value (currently)");
+#if 0
     if (SvTYPE(newvalue) == SVt_PVLV && is_inout)       /* may allow later */
 	croak("Can't bind ``lvalue'' mode scalar as inout parameter (currently)");
+#endif
 
     if (dbis->debug >= 2)
 	fprintf(DBILOGFP, "bind %s <== '%.200s' (attribs: %s)\n",
@@ -2808,10 +3297,21 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     phs = (phs_t*)SvPVX(*phs_svp);	/* placeholder struct	*/
 
     if (phs->sv == &sv_undef) { /* first bind for this placeholder      */
-        phs->ftype    = CS_CHAR_TYPE;
-/*	phs->sql_type = (sql_type) ? sql_type : CS_CHAR_TYPE;           */
+	phs->sql_type = (sql_type) ? sql_type : SQL_CHAR;
+        phs->ftype    = map_sql_types(phs->sql_type);
+	if(imp_sth->type == 1) { /* RPC call, must set up the datafmt struct */
+	    if(phs->varname[0] == '@') {
+		strcpy(phs->varname, phs->datafmt.name);
+		phs->datafmt.namelen = strlen(phs->varname);
+	    } else
+		phs->datafmt.namelen = 0;
+	    phs->datafmt.datatype = phs->ftype;
+	    phs->datafmt.status = phs->is_inout? CS_RETURN : CS_INPUTVALUE;
+	    phs->datafmt.maxlength = 0;
+	}
         phs->maxlen   = maxlen;         /* 0 if not inout               */
-        phs->is_inout = is_inout;
+/*        phs->is_inout = is_inout; */
+#if 0
         if (is_inout) {
             phs->sv = SvREFCNT_inc(newvalue);   /* point to live var    */
             ++imp_sth->has_inout_params;
@@ -2820,14 +3320,17 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
                 imp_sth->out_params_av = newAV();
             av_push(imp_sth->out_params_av, SvREFCNT_inc(*phs_svp));
         }
+#endif
  
         /* some types require the trailing null included in the length. */
         phs->alen_incnull = 0;  
     }
+#if 0
         /* check later rebinds for any changes */
     else if (is_inout || phs->is_inout) {
         croak("Can't rebind or change param %s in/out mode after first bind", phs->name);
     }
+#endif
     else if (maxlen && maxlen != phs->maxlen) {
         croak("Can't change param %s maxlen (%ld->%ld) after first bind",
                         phs->name, phs->maxlen, maxlen);
@@ -2991,7 +3494,33 @@ CS_COMMAND	*cmd;
     return retcode;
 }
 
-static int map_types(int syb_type)
+static int map_sql_types(sql_type)
+    int sql_type;
+{
+    int ret;
+    switch(sql_type) {
+      case SQL_NUMERIC:
+      case SQL_DECIMAL:
+	ret = CS_NUMERIC_TYPE;
+	break;
+      case SQL_INTEGER:
+      case SQL_SMALLINT:
+	ret = CS_INT_TYPE;
+	break;
+      case SQL_FLOAT:
+      case SQL_REAL:
+      case SQL_DOUBLE:
+	ret = CS_FLOAT_TYPE;
+	break;
+      default:
+	ret = CS_CHAR_TYPE;
+    }
+
+    return ret;
+}
+
+static int map_syb_types(syb_type)
+    int syb_type;
 {
     switch(syb_type) {
     case CS_CHAR_TYPE:		return 1;

@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.13 2000/11/15 00:56:41 mpeppler Exp $
+   $Id: dbdimp.h,v 1.14 2001/07/03 15:52:01 mpeppler Exp $
 
-   Copyright (c) 1997, 1998  Michael Peppler
+   Copyright (c) 1997-2001  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -50,6 +50,7 @@ struct imp_dbh_st {
     
     CS_CONNECTION *connection;
     CS_LOCALE     *locale;
+    CS_IODESC      iodesc;
     char      tranName[32];
     int       inTransaction;
     int       doRealTran;
@@ -75,16 +76,22 @@ struct imp_dbh_st {
     char      hostname[255];
     char      database[36];
     char      tdsLevel[30];
+    char      encryptPassword[10];
 
     int       isDead;
 
     SV	      *err_handler;
+
+    SV        *row_cb;
 
     int       showEed;
     int       showSql;
     int       flushFinish;
     int       rowcount;
     int       doProcStatus;
+    int       deadlockRetry;
+    int       deadlockSleep;
+    int       deadlockVerbose;
 
     char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
 					   used for error reporting */
@@ -92,6 +99,7 @@ struct imp_dbh_st {
 
 typedef struct phs_st {
     int ftype;
+    int sql_type;
     SV *sv;
     int sv_type;
     bool is_inout;
@@ -100,6 +108,7 @@ typedef struct phs_st {
     char *sv_buf;
 
     CS_DATAFMT datafmt;
+    char varname[34];
     
     int alen_incnull;	/* 0 or 1 if alen should include null	*/
     char name[1];	/* struct is malloc'd bigger as needed	*/
@@ -115,6 +124,7 @@ struct imp_sth_st {
     CS_COMMAND *cmd;
     ColData    *coldata;
     CS_DATAFMT *datafmt;
+
     int         numCols;
     CS_INT      lastResType;
     CS_INT      numRows;
@@ -122,12 +132,17 @@ struct imp_sth_st {
 
     int         doProcStatus;
     int         lastProcStatus;
+    int         noBindBlob;
+
+    int         retryCount;
 
     int         exec_done;
 
     /* Input Details	*/
     char      dyn_id[50];	/* The id for this ct_dynamic() call */
     int       dyn_execed;       /* true if ct_dynamic(CS_EXECUTE) has been called */
+    int       type;		/* 0 = normal, 1 => rpc */
+    char      proc[150];	/* used for rpc calls */
     char      *statement;	/* sql (see sth_scan)		*/
     HV        *all_params_hv;	/* all params, keyed by name	*/
     AV        *out_params_av;	/* quick access to inout params	*/

@@ -1,6 +1,6 @@
-/* $Id: Sybase.h,v 1.3 2000/11/15 00:56:21 mpeppler Exp $
+/* $Id: Sybase.h,v 1.5 2001/08/03 20:05:59 mpeppler Exp $
 
-   Copyright (c) 1997  Michael Peppler
+   Copyright (c) 1997 - 2001 Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file,
@@ -97,6 +97,14 @@ int      syb_st_finish  _((SV *sth, imp_sth_t *imp_sth));
 void     syb_st_destroy _((SV *sth, imp_sth_t *imp_sth));
 int      syb_st_blob_read _((SV *sth, imp_sth_t *imp_sth,
                 int field, long offset, long len, SV *destrv, long destoffset));
+int      syb_ct_get_data _((SV *sth, imp_sth_t *imp_sth, 
+			    int column, SV *bufrv, int buflen));
+int      syb_ct_data_info _((SV *sth, imp_sth_t *imp_sth, int action, 
+			     int column, SV *attr));
+int      syb_ct_send_data _((SV *sth, imp_sth_t *imp_sth, char *buffer, 
+			     int size));
+int      syb_ct_prepare_send _((SV *sth, imp_sth_t *));
+int      syb_ct_finish_send _((SV *sth, imp_sth_t *));
 int      syb_st_STORE_attrib _((SV *sth, imp_sth_t *imp_sth, SV *keysv, SV *valuesv));
 SV      *syb_st_FETCH_attrib _((SV *sth, imp_sth_t *imp_sth, SV *keysv));
  

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.3 2000/11/06 18:50:17 mpeppler Exp $
+# $Id: fail.t,v 1.4 2001/07/03 15:52:27 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -56,7 +56,7 @@ while(my $d = $sth->fetch) {
     ;
 }
 print "ok 4\n";
-$rc = $dbh->do("create table #test(one int primary key, two int, three int check(two != three))");
+$rc = $dbh->do("create table #test(one int not null primary key, two int not null, three int not null check(two != three))");
 defined($rc) and print "ok 5\n"
     or print "not ok 5\n";
 

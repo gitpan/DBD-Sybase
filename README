@@ -1,8 +1,8 @@
-$Id: README,v 1.15 2000/11/06 18:59:04 mpeppler Exp $
+$Id: README,v 1.17 2001/08/03 20:05:59 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996, 1997, 1998, 1999, 2000  Michael Peppler
+   Copyright (c) 1996 - 2001  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -35,7 +35,37 @@ and the preceding. I feel that DBD::Sybase is now solid enough to warrant
 a "beta" release with a target of releasing 1.00 sometime during this
 winter.
 
+I'd like to thank the folks at Morgan Stanley for their help with this 
+release.
+
 Recent changes:
+
+Release 0.93
+
+	Added password encryption option to connect() request (contributed
+        by Tin Martone)
+        Added initial nsql().
+	Added ct_get_data(), ct_send_data() and friends func().
+	Added ?-style placeholder support for exec proc statements.
+	Changed getExtraLibs() in Makefile.PL to *not* link with -linsck
+	or -ltli (this avoids problems if the $SYBASE/config/libtcl.cfg
+	file has been set to load the threaded version of these
+	libraries.)
+        Added support for primary_key_info().
+        (release 0.92 was never publicly released for various reasons)
+
+        Bugs Fixed:
+	366    ping() fails if connection has been marked dead
+	364    t/fail.t bug.
+
+Release 0.91
+
+	Removed artificial 1024 byte limit on char/varchar datatypes in 
+	result sets.
+
+	Bug Fixes:
+
+	213: BLOBs are returned in HEX, not binary.
 
 Release 0.90
 
@@ -174,7 +204,7 @@ NOTE: t/fail.t will *fail* on test #8 if you are connecting to
       obscure constraint violation condition - read the code if
       you are interested.
 
-I have a simple bug tracking database at http://gw.peppler.org/cgi-bin/bug.cgi
+I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi
 You can use it to check for known problems, and to report new ones. Keep
 in mind that peppler.org lives on the end of a K56 dialup line, so it
 may be slow.

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: place.t,v 1.3 1999/05/31 21:34:03 mpeppler Exp mpeppler $
+# $Id: place.t,v 1.4 2001/07/03 15:52:53 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -11,7 +11,7 @@ use DBI;
 $loaded = 1;
 print "ok 1\n";
 
-#DBI->trace(2);
+#DBI->trace(3);
 
 # Find the passwd file:
 @dirs = ('./.', './..', './../..', './../../..');

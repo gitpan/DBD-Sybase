@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.25 2000/11/15 00:56:12 mpeppler Exp $
+# $Id: Sybase.pm,v 1.28 2001/08/03 20:05:59 mpeppler Exp $
 
-# Copyright (c) 1996,1997,1998,1999,2000   Michael Peppler
+# Copyright (c) 1996-2001   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file,
@@ -22,8 +22,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.91';
-    my $Revision = substr(q$Revision: 1.25 $, 10);
+    $VERSION = '0.93';
+    my $Revision = substr(q$Revision: 1.28 $, 10);
 
     require_version DBI 1.02;
 
@@ -81,6 +81,7 @@
     use strict;
 
     use DBI qw(:sql_types);
+    use Carp;
     
     sub prepare {
 	my($dbh, $statement, @attribs)= @_;
@@ -114,11 +115,12 @@
 # NOTE - RaiseError & PrintError is turned off while we are inside this
 # function, so we must check for any error, and return immediately if
 # any error is found.
+# XXX add optional deadlock detection?
     sub do {
 	my($dbh, $statement, $attr, @params) = @_;
 
 	my $sth = $dbh->prepare($statement, $attr) or return undef;
-	my $ret = $sth->execute(@params) or return undef;
+	$sth->execute(@params) or return undef;
 	return undef if $sth->err;
 	my $rows = $sth->rows;
 	if(defined($sth->{syb_more_results})) {
@@ -152,8 +154,22 @@
 	$sth;
     }
 
+    sub primary_key_info {
+	my $dbh = shift;
+	my $catalog = shift;
+	my $schema = shift;
+	my $table = shift;
+
+	my $sth = $dbh->prepare("sp_pkeys $table");
+
+	$sth->execute;
+	$sth;
+    }
+
     sub ping {
 	my $dbh = shift;
+	return 0 if DBD::Sybase::db::_isdead($dbh);
+
 	my $sth = $dbh->prepare("select * from sysusers where 1=2");
 	
 	return 0 if(!defined($sth->execute) && DBD::Sybase::db::_isdead($dbh));
@@ -227,6 +243,104 @@
 	push(@$ti, @$data);
 
 	return $ti;
+    }
+
+    # First straight port of DBlib::nsql.
+    # mpeppler, 2/19/01
+    # This version can't handle ? placeholders
+    sub nsql {
+	my ($dbh,$sql,$type,$callback) = @_;
+	my (@res,$data);
+	my $retrycount = $dbh->FETCH('syb_deadlock_retry');
+	my $retrysleep = $dbh->FETCH('syb_deadlock_sleep') || 60;
+	my $retryverbose = $dbh->FETCH('syb_deadlock_verbose');
+
+#	warn "retrycount = $retrycount, retrysleep = $retrysleep, verbose = $retryverbose\n";
+
+	if ( ref $type ) {
+	    $type = ref $type;
+	}
+	elsif ( not defined $type ) {
+	    $type = "";
+	}
+	
+#	undef $DB_ERROR;
+	my $sth = $dbh->prepare($sql);
+	return unless $sth;
+
+	$sth->{RaiseError} = 1;
+	
+    DEADLOCK: 
+        {	
+	    # Use RaiseError technique to throw a fatal error if anything goes
+	    # wrong in the execute or fetch phase.
+	    eval { 
+		$sth->execute; 
+		do {
+		    if ( $type eq "HASH" ) {
+			while ( $data = $sth->fetchrow_hashref ) {
+			    if ( ref $callback eq "CODE" ) {
+				unless ( $callback->(%$data) ) {
+				    return;
+				} 
+			    }
+			    else {
+				push(@res,{%$data});
+			    }
+			}
+		    }
+		    elsif ( $type eq "ARRAY" ) {
+			while ( $data = $sth->fetchrow_arrayref ) {
+			    if ( ref $callback eq "CODE" ) {
+				unless ( $callback->(@$data) ) {
+				    return;
+				} 
+			    }
+			    else {
+				push(@res,( @$data == 1 ? $$data[0] : [@$data] ));
+			    }
+			}
+		    }
+		    else {
+			# If you ask for nothing, you get nothing.  But suck out
+			# the data just in case.
+			while ( $data = $sth->fetch ) { 1; }
+			$res[0]++;	# Return non-null (true)
+		    }
+		    
+		} while($sth->FETCH('syb_more_results'));
+	    };
+	    # If $@ is set then something failed in the eval{} call above.
+	    if($@) {
+		my $err = $sth->err;
+		if ( $dbh->FETCH('syb_deadlock_retry') && $err == 1205 ) {
+		    if ( $retrycount < 0 || $retrycount-- ) {
+			carp "SQL deadlock encountered.  Retrying...\n" if $retryverbose;
+			sleep($retrysleep);
+			redo DEADLOCK;
+		    }
+		    else {
+			carp "SQL deadlock retry failed ", $dbh->FETCH('syb_deadlock_retry'), " times.  Aborting.\n"
+			    if $retryverbose;
+			last DEADLOCK;
+		    }
+		}
+		
+		last DEADLOCK;
+	    }
+	}
+	#
+	# If we picked any sort of error, then don't feed the data back.
+	#
+	if ( $dbh->err ) {
+	    return;
+	}
+	elsif ( ref $callback eq "CODE" ) {
+	    return 1;
+	}
+	else {
+	    return @res;
+	}
     }
 }
 
@@ -384,6 +498,11 @@ Specify the language that the client uses.
      $dbh = DBI->connect("dbi:Sybase:language=us_english",
 			 $user, $passwd);
 
+Note that the language has to have been installed on the server (via
+langinstall or sp_addlanguage) for this to work. If the language is not
+installed the session will default to the default language of the 
+server.
+
 =item packetSize
 
 Specify the network packet size that the connection should use. Using a
@@ -450,6 +569,13 @@ by the client.
 
 B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
 features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
+
+=item encryptPassword
+
+Specify the use of the client password encryption supported by CT-Lib.
+Specify a value of 1 to use encrypted passwords.
+
+    $dbh->DBI->connect("dbi:Sybase:encryptPassword=1", $user, $password);
 
 =back
 
@@ -669,7 +795,14 @@ Default is for this attribute to be B<0>.
 Setting this attribute causes $sth->execute() to fetch the return status
 of any executed stored procs in the SQL being executed. If the return
 status is non-0 then $sth->execute() will report that the operation 
-failed (ie it will return C<undef>)
+failed (ie it will return C<undef>). This will B<NOT> cause an error
+to be raised if RaiseError is set, however. To get that behaviour
+you need to generate a user error code in the stored proc via
+a 
+
+    raiserror <num> <errmsg> 
+
+statement.
 
 Setting this attribute does B<NOT> affect existing $sth handles, only
 those that are created after setting it. To change the behavior of 
@@ -722,6 +855,31 @@ etc...).
 =item syb_do_proc_status (bool)
 
 See above (under Database Handle Attributes) for an explanation.
+
+=item syb_no_bind_blob (bool)
+
+If set then any IMAGE or TEXT columns in a query are B<NOT> returned
+when calling $sth->fetch (or any variation).
+
+Instead, you would use
+
+    $sth->func($column, \$data, $size, 'ct_get_data');
+
+to retrieve the IMAGE or TEXT data. If $size is 0 then the entire item is
+fetched, otherwis  you can call this in a loop to fetch chunks of data:
+
+    while(1) {
+	$sth->func($column, \$data, 1024, 'ct_get_data');
+	last unless $data;
+	print OUT $data;
+    }
+
+B<Note>: The IMAGE or TEXT column that is to be fetched this way I<must> 
+be I<last> in the select list.
+
+See also the description of the ct_get_data() API call in the Sybase
+OpenClient manual, and the "Working with TEXT/IMAGE columns" section
+elsewhere in this document.
 
 =back
 
@@ -814,7 +972,7 @@ So the OUTPUT params are returned as one row in a special result set.
 =head1 Multiple active statements on one $dbh
 
 It is possible to open multiple active statements on a single database 
-handle. This is done by openeing a new physical connection in $dbh->prepare()
+handle. This is done by opening a new physical connection in $dbh->prepare()
 if there is already an active statement handle for this $dbh.
 
 This feature has been implemented to improve compatibility with other
@@ -828,27 +986,164 @@ integrity using multiple statement handles simultaneously as these in
 reality refer to different physical connections.
 
 
-=head1 IMAGE and TEXT datatypes
+=head1 Working with IMAGE and TEXT columns
 
-DBD::Sybase uses the standard OpenClient conversion routines to convert
-data retrieved from the server into either string or numeric format.
+DBD::Sybase can store and retrieve IMAGE or TEXT data (aka "blob" data)
+via standard SQL statements. The B<LongReadLen> handle attribute controls
+the maximum size of IMAGE or TEXT data being returned for each data 
+element.
 
-IMAGE data is returned as a hex string by default. You can use the 
-I<syb_binary_images> database handle to change this behavior, or 
-convert the data to binary using something like
+When using standard SQL the default for IMAGE data is to be converted
+to a hex string, but you can use the I<syb_binary_images> handle attribute 
+to change this behaviour.
 
-    $binary = pack("H*", $hex_string);
+IMAGE and TEXT datatypes can B<not> be passed as parameters using
+?-style placeholders, and placeholders can't refer to IMAGE or TEXT 
+columns (this is a limitation of the TDS protocol used by Sybase, not
+a DBD::Sybase limitation.)
 
-to do the conversion. TEXT columns are not treated this way
-and will be returned exactly as they were stored. Internally Sybase
-makes no distinction between TEXT and IMAGE columns - both can be
-used to store either text or binary data.
+There is an alternative way to access and update IMAGE/TEXT data
+using the natice OpenClient API. This is done via $h->func() calls,
+and is, unfortunately, a little convoluted.
 
-Note that IMAGE or TEXT datatypes can not be passed as parameters
-when using ?-style placeholders, and ?-style placeholders can't refer
-to TEXT or IMAGE columns.
+=head2 Handling IMAGE/TEXT data with ct_get_data()/ct_send_data()
 
+=over 4
 
+=item $len = ct_fetch_data($col, $dataref, $numbytes)
+
+The ct_get_data() call allows you to fetch IMAGE/TEXT data in
+raw format, either in one piece or in chunks. To use this function
+you must set the I<syb_no_bind_blob> statement handle to I<TRUE>. 
+
+ct_get_data() takes 3 parameters: The column number (starting at 1)
+of the query, a scalar ref and a byte count. If the byte count is 0 
+then we read as many bytes as possible.
+
+Note that the IMAGE/TEXT column B<must> be B<last> in the select list
+for this to work.
+
+The call sequence is:
+
+    $sth = $dbh->prepare("select id, img from some_table where id = 1");
+    $sth->{syb_no_bind_blob} = 1;
+    $sth->execute;
+    while($d = $sth->fetchrow_arrayref) {
+       # The data is in the second column
+       $len = $sth->func(2, $img, 0, 'ct_get_data');
+    }
+
+ct_get_data() returns the number of bytes that were effectively fetched,
+so that when fetching chunks you can do something like this:
+
+   while(1) {
+      $len = $sth->func(2, $imgchunk, 1024, 'ct_get_data');
+      ... do something with the $imgchunk ...
+      last if $len != 1024;
+   }
+
+To explain further: Sybase stores IMAGE/TEXT data separately from 
+normal table data, in a chain of 2k blocks. To update an IMAGE/TEXT
+column Sybase needs to find the head of this chain, which is known as
+the "text pointer". As there is no I<where> clause when the ct_send_data()
+API is used we need to retrieve the I<text pointer> for the correct
+data item first, which is done via the ct_data_info(CS_GET) call. Subsequent
+ct_send_data() calls will then know which data item to update.
+
+=item $status = ct_data_info($action, $column, $attr)
+
+ct_data_info() is used to fetch or update the CS_IODESC structure
+for the IMAGE/TEXT data item that you wish to update. $action should be
+one of "CS_SET" or "CS_GET", $column is the column number of the
+active select statement (ignored for a CS_SET operation) and $attr is
+a hash ref used to set the values in the struct.
+
+ct_data_info() must be first called with CS_GET to fetch the CS_IODESC
+structure for the IMAGE/TEXT data item that you wish to update. Then 
+you must update the value of the I<total_txtlen> structure element
+to the length (in bytes) of the IMAGE/TEXT data that you are going to
+insert, and optionally set the I<log_on_update> to B<TRUE> to enable full 
+logging of the operation.
+
+ct_data_info(CS_GET) will I<fail> if the IMAGE/TEXT data for which the 
+CS_IODESC is being fetched is NULL. If you have a NULL value that needs
+updating you must first update it to some non-NULL value (for example
+an empty string) using standard SQL before you can retrieve the CS_IODESC
+entry. This actually makes sense because as long as the data item is NULL
+there is B<no> I<text pointer> and no TEXT page chain for that item.
+
+See the ct_send_data() entry below for an example.
+
+=item ct_prepare_send()
+
+ct_prepare_send() must be called to initialize a IMAGE/TEXT write operation.
+See the ct_send_data() entry below for an example.
+
+=item ct_finish_send()
+
+ct_finish_send() is called to finish/commit an IMAGE/TEXT write operation.
+See the ct_send_data() entry below for an example.
+
+=item ct_send_data($image, $bytes)
+
+Send $bytes bytes of $image to the database. The request must have been set
+up via ct_prepare_send() and ct_data_info() for this to work. ct_send_data()
+returns B<TRUE> on success, and B<FALSE> on failure.
+
+In this example, we wish to update the data in the I<img> column
+where the I<id> column is 1:
+
+  # first we need to find the CS_IODESC data for the data
+  $sth = $dbh->prepare("select img from imgtable where id = 1");
+  $sth->execute;
+  while($sth->fetch) {    # don't care about the data!
+      $sth->func('CS_GET', 1, 'ct_data_info');
+  }
+
+  # OK - we have the CS_IODESC values, so do the update:
+  $sth->func('ct_prepare_send');
+  # Set the size of the new data item (that we are inserting), and make
+  # the operation unlogged
+  $sth->func('CS_SET', 1, {total_txtlen => length($image), log_on_update => 0}, 'ct_data_info');
+  # now transfer the data (in a single chunk, this time)
+  $sth->func($image, length($image), 'ct_send_data');
+  # commit the operation
+  $sth->func('ct_finish_send');
+
+The ct_send_data() call can also transfer the data in chunks, however you 
+must know the total size of the image before you start the insert. For example:
+
+  # update a database entry with a new version of a file:
+  my $size = -s $file;
+  # first we need to find the CS_IODESC data for the data
+  $sth = $dbh->prepare("select img from imgtable where id = 1");
+  $sth->execute;
+  while($sth->fetch) {    # don't care about the data!
+      $sth->func('CS_GET', 1, 'ct_data_info');
+  }
+
+  # OK - we have the CS_IODESC values, so do the update:
+  $sth->func('ct_prepare_send');
+  # Set the size of the new data item (that we are inserting), and make
+  # the operation unlogged
+  $sth->func('CS_SET', 1, {total_txtlen => $size, log_on_update => 0}, 'ct_data_info');
+
+  # open the file, and store it in the db in 1024 byte chunks.
+  open(IN, $file) || die "Can't open $file: $!";
+  while($size) {
+      $to_read = $size > 1024 ? 1024 : $size;
+      $bytesread = read(IN, $buff, $to_read);
+      $size -= $bytesread;
+
+      $sth->func($buff, $bytesread, 'ct_send_data');
+  }
+  close(IN);
+  # commit the operation
+  $sth->func('ct_finish_send');
+      
+
+=back
+       
 
 =head1 AutoCommit, Transactions and Transact-SQL
 
@@ -882,7 +1177,8 @@ must use $h->{syb_chained_txn} = 0, or $h->{AutoCommit} = 1.
 
 =head1 Using ? Placeholders & bind parameters to $sth->execute
 
-This version supports the use of ? placeholders in SQL statements. It does 
+DBD::Sybase supports the use of ? placeholders in SQL statements as long
+as the underlying library and database engine supports it. It does 
 this by using what Sybase calls I<Dynamic SQL>. The ? placeholders allow
 you to write something like:
 
@@ -906,13 +1202,19 @@ procedure that corresponds to your SQL statement. You then pass variables
 to $sth->execute or $dbh->do, which get inserted in the query, and any rows
 are returned.
 
-For those of you who are used to Transact-SQL there are some limitations
-to using this feature: In particular you can B<not> pass parameters this
-way to stored procedures, and you can only execute a SQL statement
-that returns a single result set. In addition, the ? placeholders can only appear in a 
+DBD::Sybase uses the underlying Sybase API calls to handle ?-style 
+placeholders. For select/insert/update/delete statements DBD::Sybase
+calls the ct_dynamic() family of Client Library functions, which gives
+DBD::Sybase data type information for each parameter to the query.
+
+You can only use ?-style placeholders for statements that return a single
+result set, and the ? placeholders can only appear in a 
 B<WHERE> clause, in the B<SET> clause of an B<UPDATE> statement, or in the
-B<VALUES> list of an B<INSERT> statement. In particular you can't pass ?
-as a parameter to a stored procedure.
+B<VALUES> list of an B<INSERT> statement. 
+
+The underlying API does not support ?-style placeholders for stored 
+procedures, but see the section on titled B<Stored Procedures and Placeholders>
+elsewhere in this document.
 
 ?-style placeholders can B<NOT> be used to pass TEXT or IMAGE data
 items to the server. This is a limitation of the TDS protocol, not of
@@ -930,6 +1232,21 @@ cache and don't affect the system tables at all.
 In general however I find that if your application is going to run 
 against Sybase it is better to write ad-hoc
 stored procedures rather than use the ? placeholders in embedded SQL.
+
+Out of curiosity I did some simple timings to see what the overhead
+of doing a prepare with ? placehoders is vs. a straight SQL prepare and
+vs. a stored procedure prepare. Against an 11.0.3.3 server (linux) the
+placeholder prepare is significantly slower, and you need to do ~30
+execute() calls on the prepared statement to make up for the overhead.
+Against a 12.0 server (solaris) however the situation was very different,
+with placeholder prepare() calls I<slightly> faster than straight SQL
+prepare(). This is something that I I<really> don't understand, but
+the numbers were pretty clear.
+
+In all cases stored proc prepare() calls were I<clearly> faster, and 
+consistently so.
+
+This test did not try to gauge concurrency issues, however.
 
 It is not possible to retrieve the last I<IDENTITY> value
 after an insert done with ?-style placeholders. This is a Sybase
@@ -958,6 +1275,76 @@ Please see the discussion on Dynamic SQL in the
 OpenClient C Programmer's Guide for details. The guide is available on-line
 at http://sybooks.sybase.com/
 
+=head1 Stored Procedures and Placeholders
+
+B<NOTE: This feature is experimental>
+
+This version of DBD::Sybase introduces the ability to use ?-style
+placeholders as parameters to stored proc calls. The requirements are
+that the stored procedure call be initiated with an "exec" and that it be
+the only statement in the batch that is being prepared():
+
+For example, this prepares a stored proc call with named parameters:
+
+    my $sth = $dbh->prepare("exec my_proc \@p1 = ?, \@p2 = ?");
+    $sth->execute('one', 'two');
+
+You can also use positional parameters:
+
+    my $sth = $dbh->prepare("exec my_proc ?, ?");
+    $sth->execute('one', 'two');
+
+You may I<not> mix positional and named parameter in the same prepare.
+
+You can specify I<OUTPUT> parameters in the usual way, but you can B<NOT>
+use bind_param_inout() to get the output result - instead you have to call
+fetch() and/or $sth->func('syb_output_params'):
+
+    my $sth = $dbh->prepare("exec my_proc \@p1 = ?, \@p2 = ?, \@p3 = ? OUTPUT ");
+    $sth->execute('one', 'two', 'three');
+    my (@data) = $sth->func('syb_output_params');
+
+DBD::Sybase does not attempt to figure out the correct parameter type
+for each parameter (it would be possible to do this for most cases, but
+there are enough exceptions that I preferred to avoid the issue for the 
+time being). DBD::Sybase defaults all the parameters to SQL_CHAR, and
+you have to use bind_param() with an explicit type value to set this to
+something different. The type is then remembered, so you only need to 
+use the explicit call once for each parameter:
+
+    my $sth = $dbh->prepare("exec my_proc \@p1 = ?, \@p2 = ?");
+    $sth->bind_param(1, 'one', SQL_CHAR);
+    $sth->bind_param(2, 2.34, SQL_FLOAT);
+    $sth->execute;
+    ....
+    $sth->execute('two', 3.456);
+    etc...
+
+When binding SQL_NUMERIC or SQL_DECIMAL data you may get fatal conversion
+errors if the scale or the precision exceeds the size of the target
+parameter definition.
+
+For example, consider the following stored proc definition:
+
+    declare proc my_proc @p1 numeric(5,2) as...
+
+and the following prepare/execute snippet:
+
+    my $sth = $dbh->prepare("exec my_proc \@p1 = ?");
+    $sth->bind_param(1, 3.456, SQL_NUMERIC);
+
+This generates the following error:
+
+DBD::Sybase::st execute failed: Server message number=241 severity=16 state=2 line=0 procedure=dbitest text=Scale error during implicit conversion of NUMERIC value '3.456' to a NUMERIC field.
+
+You can tell Sybase (and DBD::Sybase) to ignore these sorts of errors by
+setting the I<arithabort> option:
+
+    $dbh->do("set arithabort off");
+
+See the I<set> command in the Sybase Adaptive Server Enterprise Reference 
+Manual for more information on the set command and on the arithabort option.
+
 
 =head1 BUGS
 
@@ -970,10 +1357,77 @@ suggestion is to only use ?-style placeholders if you really need them
 (i.e. if you are going to execute the same prepared statement multiple
 times).
 
-I have a simple bug tracking database at http://gw.peppler.org/cgi-bin/bug.cgi.
+The new primary_key_info() method will only return data for tables 
+where a declarative "primary key" constraint was included when the table
+was created.
+
+I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi .
 You can use it to view known problems, or to report new ones. Keep in
 mind that peppler.org is connected to the net via a K56 dialup line, so
 it may be slow.
+
+=head1 Using DBD::Sybase with MS-SQL 
+
+MS-SQL started out as Sybase 4.2, and there are still a lot of similarities
+between Sybase and MS-SQL which makes it possible to use DBD::Sybase
+to query a MS-SQL dataserver using either the Sybase OpenClient libraries
+or the FreeTDS libraries (see http://www.freetds.org).
+
+However, using the Sybase libraries to query an MS-SQL server has
+certain limitations. In particular ?-style placeholders are not 
+supported (although support when using the FreeTDS libraries is
+possible in a future release of the libraries), and certain B<syb_> 
+attributes may not be supported.
+
+Sybase defaults the TEXTSIZE attribute (aka B<LongReadLen>) to
+32k, but MS-SQL 7 doesn't seem to do that correctly, resulting in
+very large memory requests when querying tables with TEXT/IMAGE 
+data columns. The work-around is to set TEXTSIZE to some decent value
+via $dbh->{LongReadLen} (if that works - I haven't had any confirmation
+that it does) or via $dbh->do("set textsize <somesize>");
+
+=head1 nsql
+
+The nsql() call is a direct port of the function of the same name that
+exists in Sybase::DBlib.
+
+Usage:
+
+   @data = $dbh->func($sql, $type, $callback, 'nsql');
+
+This executes the query in $sql, and returns all the data in @data. The 
+$type parameter can be used to specify that each returned row be in array
+form (i.e. $type passed as 'ARRAY', which is the default) or in hash form 
+($type passed as 'HASH') with column names as keys.
+
+If $callback is specified it is taken as a reference to a perl sub, and
+each row returned by the query is passed to this subroutine I<instead> of
+being returned by the routine (to allow processing of large result sets, 
+for example).
+
+C<nsql> also checks three special attributes to enable deadlock retry logic
+\(I<Note> none of these attributes have any effect anywhere else at the moment):
+
+=over 4
+
+=item syb_deadlock_retry I<count>
+
+Set this to a non-0 value to enable deadlock detection and retry logic within
+nsql(). If a deadlock error is detected (error code 1205) then the entire
+batch is re-submitted up to I<syb_deadlock_retry> times. Default is 0 (off).
+
+=item syb_deadlock_sleep I<seconds>
+
+Number of seconds to sleep between deadlock retries. Default is 60.
+
+=item syb_deadlock_verbose (bool)
+
+Enable verbose logging of deadlock retry logic. Default is off.
+
+=back
+
+Deadlock detection will be added to the $dbh->do() method in a future
+version of DBD::Sybase. 
 
 
 =head1 SEE ALSO
@@ -990,7 +1444,7 @@ DBD::Sybase by Michael Peppler
 
 =head1 COPYRIGHT
 
-The DBD::Sybase module is Copyright (c) 1997-1999 Michael Peppler.
+The DBD::Sybase module is Copyright (c) 1997-2001 Michael Peppler.
 The DBD::Sybase module is free software; you can redistribute it and/or
 modify it under the same terms as Perl itself with the exception that it
 cannot be placed on a CD-ROM or similar media for commercial distribution

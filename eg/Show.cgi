@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 
-# $Id: Show.cgi,v 1.3 1998/10/06 18:48:49 mpeppler Exp $
+# $Id: Show.cgi,v 1.4 2001/06/04 14:06:39 mpeppler Exp $
 #
 # Show a Sybase stored proc etc, in HTML.
 # Usage: http://host/cgi-bin/Show.cgi?server=SERVERNAME&database=DATABASE
@@ -117,8 +117,8 @@ sub TsqlToHtml {
     $html =~ s/\b(as|begin|between|declare|delete|drop|else|end|exec|exists|go|if|insert|procedure|return|set|update|values|from|select|where|and|or|create|order by)\b/<b>$1<\/b>/ig;
     $html =~ s/\b(tinyint|smallint|int|char|varchar|datetime|smalldatetime|money|smallmoney|numeric|decimal|text|binary|varbinary|image)\b/<i>$1<\/i>/gi;
 
-    $html =~ s/\t/\&nbsp\&nbsp\&nbsp\&nbsp/g;
-    $html =~ s/ /\&nbsp/sg;
+    $html =~ s/\t/\&nbsp;\&nbsp;\&nbsp;\&nbsp;/g;
+    $html =~ s/ /\&nbsp;/sg;
 
     $html;
 }
