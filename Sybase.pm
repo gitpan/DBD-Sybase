@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.24 2000/11/06 18:58:54 mpeppler Exp $
+# $Id: Sybase.pm,v 1.25 2000/11/15 00:56:12 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999,2000   Michael Peppler
 #
@@ -22,8 +22,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.90';
-    my $Revision = substr(q$Revision: 1.24 $, 10);
+    $VERSION = '0.91';
+    my $Revision = substr(q$Revision: 1.25 $, 10);
 
     require_version DBI 1.02;
 
@@ -682,6 +682,11 @@ The default is for this attribute to be B<off>.
 If set, BINARY and VARBINARY values are prefixed with '0x'
 in the result. The default is off.
 
+=item syb_binary_images
+
+If set, IMAGE data is returned in raw binary format. Otherwise the data is
+converted to a long hex string. The default is off.
+
 =item syb_oc_version (string)
 
 Returns the identification string of the version of Client Library that
@@ -828,12 +833,13 @@ reality refer to different physical connections.
 DBD::Sybase uses the standard OpenClient conversion routines to convert
 data retrieved from the server into either string or numeric format.
 
-The conversion routines convert IMAGE datatypes to a hexadecimal string.
-If you need the binary representation you can use something like
+IMAGE data is returned as a hex string by default. You can use the 
+I<syb_binary_images> database handle to change this behavior, or 
+convert the data to binary using something like
 
     $binary = pack("H*", $hex_string);
 
-to do the conversion. Note that TEXT columns are not treated this way
+to do the conversion. TEXT columns are not treated this way
 and will be returned exactly as they were stored. Internally Sybase
 makes no distinction between TEXT and IMAGE columns - both can be
 used to store either text or binary data.

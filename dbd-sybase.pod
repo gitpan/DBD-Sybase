@@ -536,6 +536,11 @@ B<force a commit> on the current handle.
 If set, BINARY and VARBINARY values are prefixed with '0x' in the
 result. Default is off.
 
+=item syb_binary_images
+
+If set, IMAGE data is returned in raw binary format. Otherwise the data is
+converted to a long hex string. The default is off.
+
 =item syb_quoted_identifier (bool)
 
 If set, then identifiers that would normally clash with Sybase reserved
@@ -668,5 +673,5 @@ functionality and encourages you to use them.
 
 # This driver summary for DBD::Sybase is Copyright (c) 1999 Tim Bunce
 # and Michael Peppler.
-# $Id: dbd-sybase.pod,v 1.5 2000/11/06 18:58:45 mpeppler Exp $
+# $Id: dbd-sybase.pod,v 1.6 2000/11/15 00:56:05 mpeppler Exp $
 

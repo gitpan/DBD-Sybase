@@ -1,4 +1,4 @@
-/* $Id: Sybase.h,v 1.2 1997/09/26 21:26:40 mpeppler Exp $
+/* $Id: Sybase.h,v 1.3 2000/11/15 00:56:21 mpeppler Exp $
 
    Copyright (c) 1997  Michael Peppler
 
@@ -47,8 +47,22 @@
 
 #include "dbdimp.h"
 
-
+#if defined(CS_VERSION_125)
+#define CTLIB_VERSION   CS_VERSION_125
+#else 
+#if defined(CS_VERSION_120)
+#define CTLIB_VERSION   CS_VERSION_120
+#else 
+#if defined(CS_VERSION_110)
+#define CTLIB_VERSION   CS_VERSION_110
+#else
 #define CTLIB_VERSION	CS_VERSION_100
+#endif
+#endif
+#endif
+
+/*#define CTLIB_VERSION	CS_VERSION_100 */
+
 #ifndef MAX
 #define MAX(X,Y)	(((X) > (Y)) ? (X) : (Y))
 #endif

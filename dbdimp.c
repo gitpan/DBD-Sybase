@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.23 2000/11/06 18:58:32 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.24 2000/11/15 00:55:48 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999,2000  Michael Peppler
 
@@ -27,6 +27,7 @@ DBISTATE_DECLARE;
 
 static void cleanUp _((imp_sth_t *));
 static char *GetAggOp _((CS_INT));
+static CS_INT get_cwidth _((CS_DATAFMT *));
 static CS_INT display_dlen _((CS_DATAFMT *));
 static CS_RETCODE display_header _((imp_dbh_t *, CS_INT, CS_DATAFMT*));
 static CS_RETCODE describe _((imp_sth_t *, int));
@@ -323,7 +324,7 @@ CS_INT op;
 }
 
 static CS_INT
-display_dlen(column)
+get_cwidth(column)
 CS_DATAFMT *column;
 {
     CS_INT		len;
@@ -334,12 +335,12 @@ CS_DATAFMT *column;
       case CS_VARCHAR_TYPE:
       case CS_TEXT_TYPE:
       case CS_IMAGE_TYPE:
-	len = MIN(column->maxlength, MAX_CHAR_BUF);
+	len = column->maxlength;
 	break;
 
       case CS_BINARY_TYPE:
       case CS_VARBINARY_TYPE:
-	len = MIN((2 * column->maxlength) + 2, MAX_CHAR_BUF);
+	len = (2 * column->maxlength) + 2;
 	break;
 	
       case CS_BIT_TYPE:
@@ -380,8 +381,34 @@ CS_DATAFMT *column;
 	break;
     }
     
+    return len;
+}
+
+static CS_INT
+display_dlen(column)
+CS_DATAFMT *column;
+{
+    CS_INT		len;
+
+    len = get_cwidth(column);
+
+    switch ((int) column->datatype)
+    {
+      case CS_CHAR_TYPE:
+      case CS_VARCHAR_TYPE:
+      case CS_TEXT_TYPE:
+      case CS_IMAGE_TYPE:
+      case CS_BINARY_TYPE:
+      case CS_VARBINARY_TYPE:
+	len = MIN(len, MAX_CHAR_BUF);
+	break;
+      default:
+	break;
+    }
+    
     return MAX(strlen(column->name) + 1, len);
 }
+
 
 static CS_RETCODE
 display_header(imp_dbh, numcols, columns)
@@ -550,9 +577,10 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->doRealTran    = 1;	/* default to use non-chained transaction mode */
     imp_dbh->chainedSupported = 1;
     imp_dbh->quotedIdentifier = 0;
-    imp_dbh->rowcount         = 0;
-    imp_dbh->doProcStatus     = 0;
-    imp_dbh->useBin0x         = 0;
+    imp_dbh->rowcount      = 0;
+    imp_dbh->doProcStatus  = 0;
+    imp_dbh->useBin0x      = 0;
+    imp_dbh->binaryImage   = 0;   
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -1286,6 +1314,15 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	return TRUE;
     }
+    if (kl == 17 && strEQ(key, "syb_binary_images")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->binaryImage = 1;
+	} else {
+	    imp_dbh->binaryImage = 0;
+	}
+	return TRUE;
+    }
     return FALSE;
 }
 
@@ -1388,6 +1425,12 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	retsv = newSViv(imp_dbh->doProcStatus);
     }	
     if (kl == 14 && strEQ(key, "syb_use_bin_0x")) {
+	if(imp_dbh->useBin0x) 
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if (kl == 17 && strEQ(key, "syb_binary_images")) {
 	if(imp_dbh->useBin0x) 
 	    retsv = newSViv(1);
 	else
@@ -1726,6 +1769,11 @@ describe(imp_sth, restype)
 	    sprintf(imp_sth->datafmt[i].name, "%s(%d)", agg_op_name, agg_op);
 	}
 
+	if(dbis->debug >= 3)
+	    fprintf(DBILOGFP, "    ct_describe(%d): type = %d, maxlen = %d\n",
+		    i, imp_sth->datafmt[i].datatype,
+		    imp_sth->datafmt[i].maxlength);
+
 	imp_sth->coldata[i].realType = imp_sth->datafmt[i].datatype;
 	imp_sth->coldata[i].realLength = imp_sth->datafmt[i].maxlength;
 
@@ -1766,8 +1814,12 @@ describe(imp_sth, restype)
 	    New(902, imp_sth->coldata[i].value.c,
 		imp_sth->datafmt[i].maxlength, char);
 	    imp_sth->datafmt[i].format   = CS_FMT_UNUSED; /*CS_FMT_NULLTERM;*/
-	    imp_sth->coldata[i].type     = CS_TEXT_TYPE;
-	    imp_sth->datafmt[i].datatype = CS_TEXT_TYPE;
+	    if(imp_dbh->binaryImage)
+		imp_sth->coldata[i].type     = imp_sth->datafmt[i].datatype;
+	    else {
+		imp_sth->coldata[i].type     = CS_TEXT_TYPE;
+		imp_sth->datafmt[i].datatype = CS_TEXT_TYPE;
+	    }
 	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
 			      imp_sth->coldata[i].value.c,
 			      &imp_sth->coldata[i].valuelen,
@@ -1783,8 +1835,9 @@ describe(imp_sth, restype)
 	  case CS_DATETIME_TYPE:
 	  case CS_DATETIME4_TYPE:
 	  default:
-	    imp_sth->datafmt[i].maxlength =
-		display_dlen(&imp_sth->datafmt[i]) + 1;
+	    imp_sth->datafmt[i].maxlength = 
+		get_cwidth(&imp_sth->datafmt[i]) + 1;
+	    /*display_dlen(&imp_sth->datafmt[i]) + 1;*/
 	    imp_sth->datafmt[i].format   = CS_FMT_UNUSED;
 	    New(902, imp_sth->coldata[i].value.c,
 		imp_sth->datafmt[i].maxlength, char);
@@ -2074,6 +2127,7 @@ syb_st_fetch(sth, imp_sth)
 		(void)SvOK_off(sv);
 	    } else {
 		switch(imp_sth->coldata[i].type) {
+		  case CS_IMAGE_TYPE:
 		  case CS_TEXT_TYPE:
 		  case CS_CHAR_TYPE:
 		      len = imp_sth->coldata[i].valuelen;

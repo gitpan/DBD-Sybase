@@ -1,4 +1,13 @@
-$Id: CHANGES,v 1.22 2000/11/06 18:59:09 mpeppler Exp $
+$Id: CHANGES,v 1.23 2000/11/15 00:57:22 mpeppler Exp $
+
+Release 0.91
+
+	Removed artificial 1024 byte limit on char/varchar datatypes in 
+	result sets.
+
+	Bug Fixes:
+
+	213: BLOBs are returned in HEX, not binary.
 
 Release 0.90
 

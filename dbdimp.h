@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.12 1999/10/01 17:27:57 mpeppler Exp mpeppler $
+   $Id: dbdimp.h,v 1.13 2000/11/15 00:56:41 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -56,6 +56,7 @@ struct imp_dbh_st {
     int       chainedSupported;
     int       quotedIdentifier;
     int	      useBin0x;
+    int       binaryImage;
 
     int lasterr;
     int lastsev;
