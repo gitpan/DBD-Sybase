@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 
-# $Id: Show.cgi,v 1.1 1997/09/26 23:25:01 mpeppler Exp $
+# $Id: Show.cgi,v 1.2 1997/10/09 00:11:46 mpeppler Exp $
 #
 # Show a Sybase stored proc etc, in HTML.
 # Usage: http://host/cgi-bin/Show.cgi?server=SERVERNAME&database=DATABASE
@@ -26,7 +26,7 @@ if(!$database) {
     error("Please supply the <b>database</b> parameter.<p>");
 }
 
-my $dbh = DBI->connect('dbi:Sybase:', 'sa', '', {syb_dbd_server => $server});
+my $dbh = DBI->connect("dbi:Sybase:$server", 'sa', '');
 ($dbh->do("use $database") != -2) || error("The database <b>$database</b> deosn't exist");
 
 

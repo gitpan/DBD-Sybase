@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.3 1997/10/07 00:52:41 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.4 1997/10/31 19:03:36 mpeppler Exp $
 
    Copyright (c) 1997  Michael Peppler
 
@@ -329,48 +329,149 @@ void syb_init(dbistate)
     }
 }
 
+static int
+extractFromDsn(tag, source, dest, size)
+    char 	*tag;
+    char	*source;
+    char	*dest;
+    int		size;		/* avoid buffer over-runs */
+{
+    char *p = strstr(source, tag);
+    char *q = dest;
+    if(!p)
+	return 0;
+    p += strlen(tag);
+    while(p && *p && *p != ';' && --size)
+	*q++ = *p++;
+    *q = 0;
+
+    return 1;
+}
   
 int
-syb_db_login(dbh, imp_dbh, server, uid, pwd)
+syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     SV         *dbh;
     struct imp_dbh_st *imp_dbh;
-    char       *server;
+    char       *dsn;
     char       *uid;
     char       *pwd;
 {
     CS_RETCODE     retcode;
     CS_CONNECTION *connection = NULL;
     CS_COMMAND    *cmd;
+    CS_LOCALE     *locale = NULL;
     int len;
+    char server[64];
+    char charset[64];
+    char packetSize[64];
+    char language[64];
 
-    if((retcode = ct_con_alloc(context, &connection)) != CS_SUCCEED)
+    server[0]     = 0;
+    charset[0]    = 0;
+    packetSize[0] = 0;
+    language[0]   = 0;
+    if(strchr(dsn, '=')) {
+	extractFromDsn("server=", dsn, server, 64);
+	extractFromDsn("charset=", dsn, charset, 64);
+	extractFromDsn("packetSize=", dsn, packetSize, 64);
+	extractFromDsn("language=", dsn, language, 64);
+    } else {
+	strcpy(dsn, server);
+    }
+
+    /* Set up the proper locale - to handle character sets, etc. */
+    if ((retcode = cs_loc_alloc( context, &locale ) != CS_SUCCEED)) {
+	warn("ct_loc_alloc failed");
+	return 0;
+    }
+    if (cs_locale( context, CS_SET, locale, CS_LC_ALL, (CS_CHAR*)NULL,
+		   CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) 
+    {
+	warn("cs_locale(CS_LC_ALL) failed");
+	return 0;
+    }
+    if(language[0] != 0) {
+	if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
+		       (CS_CHAR*)language, CS_NULLTERM, 
+		       (CS_INT*)NULL) != CS_SUCCEED)
+	{
+	    warn("cs_locale(CS_SYB_LANG, %s) failed", language);
+	    return 0;
+	}
+    }
+    if(charset[0] != 0) {
+	if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
+		       (CS_CHAR*)charset, CS_NULLTERM, 
+		       (CS_INT*)NULL) != CS_SUCCEED)
+	{
+	    warn("cs_locale(CS_SYB_CHARSET, %s) failed", charset);
+	    return 0;
+	}
+    }
+
+
+
+    if((retcode = ct_con_alloc(context, &connection)) != CS_SUCCEED) {
 	warn("ct_con_alloc failed");
+	return 0;
+    }
   
+    if (ct_con_props( connection, CS_SET, CS_LOC_PROP, (CS_VOID*)locale,
+		      CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
+    {
+	warn("ct_con_props(CS_LOC_PROP) failed");
+	return 0;
+    }
+
     if((retcode = ct_con_props(connection, CS_SET, CS_USERDATA,
 			       &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
-	warn("ct_con_props(userdata) failed");
+    {
+	warn("ct_con_props(CS_USERDATA) failed");
+	return 0;
+    }
+
+    if (packetSize[0] != 0) {
+	int i = atoi(packetSize);
+	if (ct_con_props( connection, CS_SET, CS_PACKETSIZE, (CS_VOID*)&i,
+			  CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
+	{
+	    warn("ct_con_props(CS_PACKETSIZE, %d) failed", i);
+	    return 0;
+	}
+    }
 
     if(retcode == CS_SUCCEED && uid && *uid) {
 	if((retcode = ct_con_props(connection, CS_SET, CS_USERNAME, 
 				   uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
-	    warn("ct_con_props(username) failed");
+	{
+	    warn("ct_con_props(CS_USERNAME) failed");
+	    return 0;
+	}
+	
     }
     if(retcode == CS_SUCCEED && pwd && *pwd) {
 	if((retcode = ct_con_props(connection, CS_SET, CS_PASSWORD, 
 				   pwd, CS_NULLTERM, NULL)) != CS_SUCCEED)
-	    warn("ct_con_props(password) failed");
+	{
+	    warn("ct_con_props(CS_PASSWORD) failed");
+	    return 0;
+	}
     }
     if(retcode == CS_SUCCEED)
     {
 	if((retcode = ct_con_props(connection, CS_SET, CS_APPNAME, 
 				   scriptName, CS_NULLTERM, NULL)) != CS_SUCCEED)
-	    warn("ct_con_props(appname) failed");
+	{
+	    warn("ct_con_props(CS_APPNAME, %s) failed", scriptName);
+	    return 0;
+	}
     }
     if (retcode == CS_SUCCEED)
     {
 	len = (server == NULL || !*server) ? 0 : CS_NULLTERM;
-	if((retcode = ct_connect(connection, server, len)) != CS_SUCCEED)
-	    warn("ct_connect failed");
+	if((retcode = ct_connect(connection, server, len)) != CS_SUCCEED) {
+	    return 0;
+	}
     }
 
     imp_dbh->connection = connection;

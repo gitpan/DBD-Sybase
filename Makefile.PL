@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.3 1997/10/07 00:49:35 mpeppler Exp $
+# $Id: Makefile.PL,v 1.5 1997/10/31 19:00:40 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -28,7 +28,9 @@ WriteMakefile('NAME' => 'DBD::Sybase',
 	      clean	=> { FILES=> 'Sybase.xsi' },
 	      OBJECT => '$(O_FILES)',
 	      'VERSION_FROM' => 'Sybase.pm',
-		LINKTYPE => $LINKTYPE,
+	      'LDDLFLAGS' => "-L$SYBASE/lib $Config{lddlflags}",
+	      'LDFLAGS' => "-L$SYBASE/lib $Config{ldflags}",
+	      LINKTYPE => $LINKTYPE,
 	      'dist' => {'TARFLAGS' => 'cvfF', 'COMPRESS' => 'gzip'},
 	      );
 
@@ -56,8 +58,13 @@ sub configure {
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
     }
-    
-    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
+
+# XXX add VMS patch
+    if($^O eq 'MSWin32') {
+	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib $attr{EXTRA_LIBS} -lm";
+    } else {
+	$lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
+    }
     
     my $dbidir = $attr{DBI_INCLUDE} || "$Config{sitearchexp}/auto/DBI";
     if(!-e "$dbidir/DBIXS.h") {
