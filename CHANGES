@@ -1,4 +1,33 @@
-$Id: CHANGES,v 1.18 1999/09/07 20:44:24 mpeppler Exp $
+$Id: CHANGES,v 1.19 1999/10/01 17:40:12 mpeppler Exp $
+
+Release 0.21
+
+	Added constant() function, so that if DBD::Sybase is use'd you 
+	can access some CS_xxx_RESULT constants.
+	Added $sth->func('syb_output_params') to allow for easier
+	retrieval of stored proc OUTPUT parameters.
+	Added syb_do_proc_status database attribute to allow $sth->execute
+	to handle stored procedure return status directly, and to fail if
+	the stored proc has a non-0 return status. This should also fix 
+	bug 255.
+	Errors with severity 10 or below are not stored in $DBI::err 
+	anymore. Use $dbh->{syb_err_handler} to get at those warning
+	messages.
+	Added t/fail.t test script to better test failure modes.
+	Setting AutoCommit on a $dbh with active statement handles is now 
+	a fatal error.
+
+	Bug Fixes:
+
+	255: Memory leak for prepared statements that are not executed.
+	264: make test fails when building DBD::Sybase against
+	     OpenClient 10.x.
+	266: make test fails when building DBD::Sybase with perl 5.004_04
+	     or earlier.
+	268: $sth->execute(x,y,z) (ie executing a prepare'd statment that
+	     has ?-style placeholders) does not return undef if a
+	     constraint violation occurs on the insert/update/delete.
+
 
 Release 0.20
 

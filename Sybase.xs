@@ -1,6 +1,6 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.6 1999/09/07 20:43:09 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.7 1999/10/01 17:29:56 mpeppler Exp $
    Copyright (c) 1997-1999 Michael Peppler
 
    Uses from Driver.xst
@@ -18,6 +18,26 @@
 DBISTATE_DECLARE;
 
 MODULE = DBD::Sybase    PACKAGE = DBD::Sybase
+
+I32
+constant()
+    PROTOTYPE:
+    ALIAS:
+    CS_ROW_RESULT           = 4040
+    CS_CURSOR_RESULT        = 4041
+    CS_PARAM_RESULT         = 4042
+    CS_STATUS_RESULT        = 4043
+    CS_MSG_RESULT           = 4044
+    CS_COMPUTE_RESULT       = 4045
+    CODE:
+    if (!ix) {
+	char *what = GvNAME(CvGV(cv));
+	croak("Unknown DBD::Sybase constant '%s'", what);
+    }
+    else RETVAL = ix;
+    OUTPUT:
+    RETVAL
+
 
 void
 timeout(value)

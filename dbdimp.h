@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.11 1999/09/07 20:43:46 mpeppler Exp $
+   $Id: dbdimp.h,v 1.12 1999/10/01 17:27:57 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -56,6 +56,9 @@ struct imp_dbh_st {
     int       chainedSupported;
     int       quotedIdentifier;
 
+    int lasterr;
+    int lastsev;
+
     char      uid[32];
     char      pwd[32];
 
@@ -79,6 +82,8 @@ struct imp_dbh_st {
     int       showSql;
     int       flushFinish;
     int       rowcount;
+    int       doProcStatus;
+
     char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
 					   used for error reporting */
 };
@@ -112,6 +117,9 @@ struct imp_sth_st {
     CS_INT      lastResType;
     CS_INT      numRows;
     int         moreResults;
+
+    int         doProcStatus;
+    int         lastProcStatus;
 
     /* Input Details	*/
     char      dyn_id[50];	/* The id for this ct_dynamic() call */

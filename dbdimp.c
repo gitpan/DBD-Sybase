@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.19 1999/09/07 20:43:30 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.20 1999/10/01 17:29:21 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -42,7 +42,7 @@ static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
 
 static CS_CONTEXT *context;
 static char scriptName[255];
-static char ocVersion[255];
+static char *ocVersion;
 
 static imp_dbh_t *DBH;
 
@@ -55,88 +55,100 @@ CS_CLIENTMSG	*errmsg;
     imp_dbh_t *imp_dbh = NULL;
     char buff[255];
 
-    if((ct_con_props(connection, CS_GET, CS_USERDATA,
-		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
-	croak("Panic: clientmsg_cb: Can't find handle from connection");
-
-    /* if LongTruncOK is set then ignore this error. */
-    if(DBIc_is(imp_dbh, DBIcf_LongTruncOk) &&
-	CS_NUMBER(errmsg->msgnumber) == 132)
-       return CS_SUCCEED;
-
-    if(imp_dbh->err_handler) {
-	dSP;
-	SV *sv, **svp;
-	HV *hv;
-	int retval, count;
-
-	ENTER;
-	SAVETMPS;
-	PUSHMARK(sp);
-	    
+    if(connection) {
+	if((ct_con_props(connection, CS_GET, CS_USERDATA,
+			 &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
+	    croak("Panic: clientmsg_cb: Can't find handle from connection");
 	
-	XPUSHs(sv_2mortal(newSViv(CS_NUMBER(errmsg->msgnumber))));
-	XPUSHs(sv_2mortal(newSViv(CS_SEVERITY(errmsg->msgnumber))));
-	XPUSHs(sv_2mortal(newSViv(0)));
-	XPUSHs(sv_2mortal(newSViv(0)));
-	XPUSHs(&sv_undef);
-	XPUSHs(&sv_undef);
-	XPUSHs(sv_2mortal(newSVpv(errmsg->msgstring, 0)));
-
-	
-	PUTBACK;
-	if((count = perl_call_sv(imp_dbh->err_handler, G_SCALAR)) != 1)
-	    croak("An error handler can't return a LIST.");
-	SPAGAIN;
-	retval = POPi;
-	
-	PUTBACK;
-	FREETMPS;
-	LEAVE;
-
-	/* If the called sub returns 0 then ignore this error */
-	if(retval == 0)
+	/* if LongTruncOK is set then ignore this error. */
+	if(DBIc_is(imp_dbh, DBIcf_LongTruncOk) &&
+	   CS_NUMBER(errmsg->msgnumber) == 132)
 	    return CS_SUCCEED;
-    }
+	
+	if(imp_dbh->err_handler) {
+	    dSP;
+	    SV *sv, **svp;
+	    HV *hv;
+	    int retval, count;
+	    
+	    ENTER;
+	    SAVETMPS;
+	    PUSHMARK(sp);
+	    
+	    
+	    XPUSHs(sv_2mortal(newSViv(CS_NUMBER(errmsg->msgnumber))));
+	    XPUSHs(sv_2mortal(newSViv(CS_SEVERITY(errmsg->msgnumber))));
+	    XPUSHs(sv_2mortal(newSViv(0)));
+	    XPUSHs(sv_2mortal(newSViv(0)));
+	    XPUSHs(&sv_undef);
+	    XPUSHs(&sv_undef);
+	    XPUSHs(sv_2mortal(newSVpv(errmsg->msgstring, 0)));
+	    
+	    
+	    PUTBACK;
+	    if((count = perl_call_sv(imp_dbh->err_handler, G_SCALAR)) != 1)
+		croak("An error handler can't return a LIST.");
+	    SPAGAIN;
+	    retval = POPi;
+	    
+	    PUTBACK;
+	    FREETMPS;
+	    LEAVE;
+	    
+	    /* If the called sub returns 0 then ignore this error */
+	    if(retval == 0)
+		return CS_SUCCEED;
+	}
 
-
-    sv_setiv(DBIc_ERR(imp_dbh), (IV)CS_NUMBER(errmsg->msgnumber));
+	sv_setiv(DBIc_ERR(imp_dbh), (IV)CS_NUMBER(errmsg->msgnumber));
     
-    if(SvOK(DBIc_ERRSTR(imp_dbh))) 
-	sv_catpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
-    else
-	sv_setpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
-    sprintf(buff, "LAYER = (%ld) ORIGIN = (%ld) ",
-	    CS_LAYER(errmsg->msgnumber), CS_ORIGIN(errmsg->msgnumber));
-    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-    sprintf(buff, "SEVERITY = (%ld) NUMBER = (%ld)\n",
-	    CS_SEVERITY(errmsg->msgnumber), CS_NUMBER(errmsg->msgnumber));
-    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-    sprintf(buff, "Message String: %s\n", errmsg->msgstring);
-    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-    if (errmsg->osstringlen > 0) {
+	if(SvOK(DBIc_ERRSTR(imp_dbh))) 
+	    sv_catpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
+	else
+	    sv_setpv(DBIc_ERRSTR(imp_dbh), "OpenClient message: ");
+	sprintf(buff, "LAYER = (%ld) ORIGIN = (%ld) ",
+		CS_LAYER(errmsg->msgnumber), CS_ORIGIN(errmsg->msgnumber));
+	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+	sprintf(buff, "SEVERITY = (%ld) NUMBER = (%ld)\n",
+		CS_SEVERITY(errmsg->msgnumber), CS_NUMBER(errmsg->msgnumber));
+	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+	sprintf(buff, "Message String: %s\n", errmsg->msgstring);
+	sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
+	if (errmsg->osstringlen > 0) {
 	    sprintf(buff, "Operating System Error: %s\n",
 		    errmsg->osstring);
 	    sv_catpv(DBIc_ERRSTR(imp_dbh), buff);
-    }
+	}
 
-    if(CS_NUMBER(errmsg->msgnumber) == 6) { /* disconnect */
-	imp_dbh->isDead = 1;
-    }
+	if(CS_NUMBER(errmsg->msgnumber) == 6) { /* disconnect */
+	    imp_dbh->isDead = 1;
+	}
 
-    /* If this is a timeout message, return CS_FAIL to cancel the
-       operation and (if we're lucky) mark the connection as dead.
-       After a timeout the connection should be considered unusable.
-       Note that returning CS_SUCCEED on timeout simply tells the
-       library to wait for another timeout period after which this
-       callback will probably be called again. */
-
-    if (CS_SEVERITY(errmsg->msgnumber) == CS_SV_RETRY_FAIL &&
-	CS_NUMBER(errmsg->msgnumber) == 63 &&
-	CS_ORIGIN(errmsg->msgnumber) == 2 &&
-	CS_LAYER(errmsg->msgnumber) == 1) {
-	imp_dbh->isDead = 1;	/* XXX */
-	return CS_FAIL;
+	/* If this is a timeout message, return CS_FAIL to cancel the
+	   operation and (if we're lucky) mark the connection as dead.
+	   After a timeout the connection should be considered unusable.
+	   Note that returning CS_SUCCEED on timeout simply tells the
+	   library to wait for another timeout period after which this
+	   callback will probably be called again. */
+	
+	if (CS_SEVERITY(errmsg->msgnumber) == CS_SV_RETRY_FAIL &&
+	    CS_NUMBER(errmsg->msgnumber) == 63 &&
+	    CS_ORIGIN(errmsg->msgnumber) == 2 &&
+	    CS_LAYER(errmsg->msgnumber) == 1) {
+	    imp_dbh->isDead = 1;	/* XXX */
+	    return CS_FAIL;
+	}
+    } else {			/* !connection */
+	fprintf(stderr, "OpenClient message: ");
+	fprintf(stderr, "LAYER = (%ld) ORIGIN = (%ld) ",
+		CS_LAYER(errmsg->msgnumber), CS_ORIGIN(errmsg->msgnumber));
+	fprintf(stderr, "SEVERITY = (%ld) NUMBER = (%ld)\n",
+		CS_SEVERITY(errmsg->msgnumber), CS_NUMBER(errmsg->msgnumber));
+	fprintf(stderr, "Message String: %s\n", errmsg->msgstring);
+	if (errmsg->osstringlen > 0) {
+	    fprintf(stderr, "Operating System Error: %s\n",
+		    errmsg->osstring);
+	}
     }
 
     return CS_SUCCEED;
@@ -204,7 +216,12 @@ CS_SERVERMSG	*srvmsg;
 
     
     if(imp_dbh && srvmsg->msgnumber) {
-	sv_setiv(DBIc_ERR(imp_dbh), (IV)srvmsg->msgnumber);
+	if(srvmsg->severity > 10) {
+	    sv_setiv(DBIc_ERR(imp_dbh), (IV)srvmsg->msgnumber);
+
+	    imp_dbh->lasterr = srvmsg->msgnumber;
+	    imp_dbh->lastsev = srvmsg->severity;
+	}
 
 	if(SvOK(DBIc_ERRSTR(imp_dbh))) 
 	    sv_catpv(DBIc_ERRSTR(imp_dbh), "Server message ");
@@ -433,8 +450,15 @@ void syb_init(dbistate)
 	croak("DBD::Sybase initialize: ct_config(netio) failed");
 
 
-    retcode = ct_config(context, CS_GET, CS_VER_STRING,
-			(CS_VOID*)ocVersion, 255, &outlen);
+    {
+	char out[1024], *p;
+	retcode = ct_config(context, CS_GET, CS_VER_STRING,
+			    (CS_VOID*)out, 1024, &outlen);
+	if((p = strchr(out, '\n')))
+	    *p = 0;
+	
+	ocVersion = strdup(out);
+    }
 
     if((sv = perl_get_sv("0", FALSE)))
     {
@@ -521,7 +545,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->doRealTran    = 1;	/* default to use non-chained transaction mode */
     imp_dbh->chainedSupported = 1;
     imp_dbh->quotedIdentifier = 0;
-    imp_dbh->rowcount = 0;
+    imp_dbh->rowcount         = 0;
+    imp_dbh->doProcStatus     = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -789,6 +814,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 		warn("Setting of CS_OPT_QUOTED_IDENT failed.");
 	    }
 	}
+#if defined(CS_OPT_ROWCOUNT)
 	if(imp_dbh->rowcount) {
 	    CS_INT value = imp_dbh->rowcount;
 	    retcode = ct_options(connection, CS_SET, CS_OPT_ROWCOUNT, 
@@ -797,6 +823,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 		warn("Setting of CS_OPT_ROWCOUNT failed.");
 	    }
 	}
+#endif
     }
 
     return connection;
@@ -1116,6 +1143,11 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if (kl == 10 && strEQ(key, "AutoCommit")) {
 	CS_BOOL    value;
 	CS_RETCODE ret;
+
+	if (DBIc_ACTIVE_KIDS(imp_dbh)) {
+	    croak("panic: can't set AutoCommit with active statement handles");
+	}
+
 	on = SvTRUE(valuesv);
 	if(on) {
 	    /* Going from OFF to ON - so force a COMMIT on any open 
@@ -1210,7 +1242,8 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	return TRUE;
     }
-    if (kl == 12 && strEQ(key, "syb_rowcount")) {	
+    if (kl == 12 && strEQ(key, "syb_rowcount")) {
+#if defined(CS_OPT_ROWCOUNT)
 	CS_INT value = SvIV(valuesv);
 	CS_RETCODE ret;
 	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_ROWCOUNT, 
@@ -1221,11 +1254,23 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	imp_dbh->rowcount = value;
 	return TRUE;
+#else
+	return FALSE;
+#endif
     }
     if (kl == 21 && strEQ(key, "syb_dynamic_supported")) {
 	warn("'syb_dynamic_supported' is a read-only attribute");
 	return TRUE;
     }
+    if (kl == 18 && strEQ(key, "syb_do_proc_status")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->doProcStatus = 1;
+	} else {
+	    imp_dbh->doProcStatus = 0;
+	}
+	return TRUE;
+    }	
     return FALSE;
 }
 
@@ -1322,8 +1367,11 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     }
 
     if(kl == 14 && strEQ(key, "syb_oc_version")) {
-	retsv = newSVpvn(ocVersion, strlen(ocVersion));
+	retsv = newSVpv(ocVersion, strlen(ocVersion));
     }
+    if (kl == 18 && strEQ(key, "syb_do_proc_status")) {
+	retsv = newSViv(imp_dbh->doProcStatus);
+    }	
 
     return retsv;
 }
@@ -1385,7 +1433,7 @@ dbd_preparse(imp_sth, statement)
 	    sprintf(start,":p%d", ++idx); /* '?' -> ':p1' (etc)	*/
 	    dest = start+strlen(start);
 	    style = 3;
-	} else {			/* perhaps ':=' PL/SQL construct */
+	} else {			/* not a placeholder, so just copy */
 	    continue;
 	}
 	*dest = '\0';			/* handy for debugging	*/
@@ -1446,6 +1494,8 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_dbh->sql[MAX_SQL_SIZE - 3] = '.';
     imp_dbh->sql[MAX_SQL_SIZE - 4] = '.';
 
+    if(imp_sth->statement != NULL)
+	safefree(imp_sth->statement);
     imp_sth->statement = NULL;
     dbd_preparse(imp_sth, statement);
 	
@@ -1519,16 +1569,12 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     } else {
 	/* delay the ct_command() to the syb_st_execute() call */
 	ret = CS_SUCCEED;
-/*
-	ret = ct_command(imp_sth->cmd, CS_LANG_CMD, imp_sth->statement,
-		      CS_NULLTERM, CS_UNUSED);
-	if(dbis->debug >= 2)
-	    fprintf(DBILOGFP, "    syb_st_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
-*/	
     }    
 
     if(ret != CS_SUCCEED) 
 	return 0;
+
+    imp_sth->doProcStatus = imp_dbh->doProcStatus;
 
     DBIc_on(imp_sth, DBIcf_IMPSET);
     DBIc_ACTIVE_on(imp_sth);
@@ -1715,6 +1761,9 @@ describe(imp_sth, restype)
 	    cleanUp(imp_sth);
 	    break;
 	}
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    describe() -> col %d, type %d, realtype %d\n", i, imp_sth->coldata[i].type, imp_sth->coldata[i].realType);
+	
     }
   GoodBye:;
     if(retcode == CS_SUCCEED) {
@@ -1758,7 +1807,28 @@ st_next_result(sth, imp_sth)
 	      retcode = describe(imp_sth, restype);
 	      if(dbis->debug >= 2)
 		  fprintf(DBILOGFP, "describe() retcode = %d\n", retcode);
-	      goto Done;
+
+	      if(restype == CS_STATUS_RESULT && imp_sth->doProcStatus) {
+		  CS_INT rows_read;
+		  retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read);
+		  if(retcode == CS_SUCCEED) {
+		      imp_sth->lastProcStatus = imp_sth->coldata[0].value.i;
+		      if(dbis->debug >= 2)
+			  fprintf(DBILOGFP, "describe() proc status code = %d\n", imp_sth->lastProcStatus);
+		      if(imp_sth->lastProcStatus != 0) {
+			  failFlag = 1;
+		      }
+		  } else {
+		      croak("ct_fetch() for proc status failed!");
+		  }
+		  while((retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read))) {
+		      if(retcode == CS_END_DATA || retcode == CS_FAIL)
+			  break;
+		  }
+	      } else
+		  goto Done;	/* exit from the ct_results() loop here if we
+				   are *NOT* in doProcStatus mode, and this is
+				   *NOT* a status result set */
 	}
     }
     if(dbis->debug >= 2)
@@ -1780,6 +1850,9 @@ syb_st_execute(sth, imp_sth)
     dTHR;
     D_imp_dbh_from_sth;
     int restype;
+
+    imp_dbh->lasterr = 0;
+    imp_dbh->lastsev = 0;
 
     if(!imp_sth->dyn_execed) {
 	imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
@@ -1805,10 +1878,8 @@ syb_st_execute(sth, imp_sth)
 	fprintf(DBILOGFP, "    syb_st_execute() -> ct_send() OK\n");
 
     restype = st_next_result(sth, imp_sth);
-    if(restype == CS_CMD_FAIL)
-	return -2;
 
-    if(restype == CS_CMD_DONE) {
+    if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
 	if(dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_st_execute() -> got CS_CMD_DONE: resetting ACTIVE, moreResults, dyn_execed\n");
 	imp_sth->moreResults = 0;
@@ -1817,6 +1888,14 @@ syb_st_execute(sth, imp_sth)
     } else {
 	DBIc_ACTIVE_on(imp_sth);
     }
+
+    /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
+       does NOT return CS_CMD_FAIL for constraint errors when inserting/updating
+       data using ?-style placeholders. */
+       
+    if(restype == CS_CMD_FAIL || (imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10))
+	return -2;
+
 
     return imp_sth->numRows;
 }
@@ -2050,9 +2129,6 @@ static void dealloc_dynamic(imp_sth)
     while(ct_results(imp_sth->cmd, &restype) == CS_SUCCEED)
 	;
 
-    /* clean up added by Bryan Mawhinney */
-/*    if(imp_sth->statement)
-      Safefree(imp_sth->statement); */
     if (imp_sth->all_params_hv) {
 	HV *hv = imp_sth->all_params_hv;
 	SV *sv;
@@ -2070,8 +2146,7 @@ static void dealloc_dynamic(imp_sth)
  
     if (imp_sth->out_params_av)
 	sv_free((SV*)imp_sth->out_params_av);
-    
-    imp_sth->statement = NULL;
+
     imp_sth->all_params_hv = NULL;
     imp_sth->out_params_av = NULL;
 }
@@ -2094,6 +2169,9 @@ void     syb_st_destroy(sth, imp_sth)
     /* moved from the prepare() call - as we need to have this around
        to re-execute non-dynamic statements... */
     if(imp_sth->statement != NULL) {
+	if(dbis->debug >= 2) {
+	    fprintf(DBILOGFP, "    syb_st_destroy(): freeing imp_sth->statement\n");
+	}
 	safefree(imp_sth->statement);
 	imp_sth->statement = NULL;
     }
@@ -2148,11 +2226,14 @@ static T_st_params S_st_fetch_params[] =
     s_A("syb_types"),		/* 9 */
     s_A("syb_result_type"),	/* 10 */
     s_A("LongReadLen"),         /* 11 */
+    s_A("syb_proc_status"),     /* 12 */
+    s_A("syb_do_proc_status"),  /* 13 */
     s_A(""),			/* END */
 };
 
 static T_st_params S_st_store_params[] = 
 {
+    s_A("syb_do_proc_status"),  /* 1 */
     s_A(""),			/* END */
 };
 #undef s_A
@@ -2179,7 +2260,7 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
     if (par->len <= 0)
 	return Nullsv;
 
-    if (!imp_sth->done_desc) {
+    if (!imp_sth->done_desc && (par - S_st_fetch_params) < 10) {
 	/* Because of the way Sybase returns information on returned values
 	   in a SELECT statement we can't call describe() here. */
 	return Nullsv;
@@ -2258,6 +2339,12 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 	case 11:
 	    retsv = newSViv(DBIc_LongReadLen(imp_sth));
 	    break;
+	case 12:
+	    retsv = newSViv(imp_sth->lastProcStatus);
+	    break;
+	case 13:
+	    retsv = newSViv(imp_sth->doProcStatus);
+	    break;
 	default:
 	    return Nullsv;
 	}
@@ -2273,13 +2360,15 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
     SV *keysv;
     SV *valuesv;
 {
-    D_imp_dbh_from_sth;
     STRLEN kl;
-    STRLEN vl;
     char *key = SvPV(keysv,kl);
-    char *value = SvPV(valuesv, vl);
     T_st_params *par;
     int rc;
+
+    if(dbis->debug >= 2) {
+	fprintf(DBILOGFP, "    syb_st_STORE(): key = %s\n", key);
+    }
+
  
     for (par = S_st_store_params; par->len > 0; par++)
 	if (par->len == kl && strEQ(key, par->str))
@@ -2290,7 +2379,15 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
 
     switch(par - S_st_store_params)
 	{
-	case 0:/*  */
+	case 0 :
+	    if(dbis->debug >= 2) {
+		fprintf(DBILOGFP, "    syb_st_STORE(): storing %d for key = %s\n", SvTRUE(valuesv), key);
+	    }
+	    if(SvTRUE(valuesv)) {
+		imp_sth->doProcStatus = 1;
+	    } else {
+		imp_sth->doProcStatus = 0;
+	    }
 	    return TRUE;
 	}
     return FALSE;
@@ -2421,14 +2518,26 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     phs_t *phs;
     STRLEN lna;
 
-    if (SvNIOK(ph_namesv) ) {	/* passed as a number	*/
-	name = namebuf;
-	sprintf(name, ":p%d", (int)SvIV(ph_namesv));
-	name_len = strlen(name);
-    } 
-    else {
+#if 1
+    /* This is the way Tim does it in DBD::Oracle to get around the
+       tainted issue. */
+    if (SvGMAGICAL(ph_namesv))	/* eg if from tainted expression */
+	mg_get(ph_namesv);
+    if (!SvNIOKp(ph_namesv)) {
 	name = SvPV(ph_namesv, name_len);
     }
+    if (SvNIOKp(ph_namesv) || (name && isDIGIT(name[0]))) {
+	sprintf(namebuf, ":p%d", (int)SvIV(ph_namesv));
+	name = namebuf;
+	name_len = strlen(name);
+    }
+
+#else
+    /* just go ahead and always treat this as a number... */
+    name = namebuf;
+    sprintf(name, ":p%d", (int)SvIV(ph_namesv));
+    name_len = strlen(name);
+#endif
 
     if (SvTYPE(newvalue) > SVt_PVLV)    /* hook for later array logic   */
         croak("Can't bind non-scalar value (currently)");

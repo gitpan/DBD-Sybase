@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.20 1999/09/07 20:42:55 mpeppler Exp $
+# $Id: Sybase.pm,v 1.21 1999/10/01 17:30:59 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
@@ -15,10 +15,15 @@
 
     use DBI ();
     use DynaLoader ();
-    @ISA = qw(DynaLoader);
+    use Exporter ();
+    @ISA = qw(DynaLoader Exporter);
 
-    $VERSION = '0.20';
-    my $Revision = substr(q$Revision: 1.20 $, 10);
+    @EXPORT = qw(CS_ROW_RESULT CS_CURSOR_RESULT CS_PARAM_RESULT
+		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
+
+
+    $VERSION = '0.21';
+    my $Revision = substr(q$Revision: 1.21 $, 10);
 
     require_version DBI 1.02;
 
@@ -240,6 +245,54 @@
 
 {   package DBD::Sybase::st; # ====== STATEMENT ======
     use strict;
+
+    sub syb_output_params {
+	my ($sth) = @_;
+
+	my @results;
+	my $status;
+
+	do {
+	    while(my $d = $sth->fetch) {
+		# The tie() doesn't work here, so call the FETCH method
+		# directly....
+		if($sth->FETCH('syb_result_type') == 4042) {
+		    push(@results, @$d);
+		} elsif($sth->FETCH('syb_result_type') == 4043) {
+		   $status = $d->[0];
+	       }
+	    }
+	} while($sth->FETCH('syb_more_results'));
+
+	# XXX What to do if $status != 0???
+	
+	@results;
+    }
+
+    sub exec_proc {
+	my ($sth) = @_;
+
+	my @results;
+	my $status;
+
+	$sth->execute || return undef;
+
+	do {
+	    while(my $d = $sth->fetch) {
+		# The tie() doesn't work here, so call the FETCH method
+		# directly....
+		if($sth->FETCH('syb_result_type') == 4043) {
+		   $status = $d->[0];
+	       }
+	    }
+	} while($sth->FETCH('syb_more_results'));
+
+	# XXX What to do if $status != 0???
+	
+	$status;
+    }
+	
+		    
 }
 
 1;
@@ -282,7 +335,7 @@ C<BEGIN{}> block:
        $ENV{SYBASE} = '/opt/sybase/11.0.2';
    }
 
-   $dbh = DBI->connect('dbi:Sybase', $user, $passwd);
+   $dbh = DBI->connect('dbi:Sybase:', $user, $passwd);
 
 
 =head2 Specifying the server name
@@ -325,7 +378,7 @@ Specify the database that should be made the default database.
 
 This is equivalent to 
 
-    $dbh = DBI->connect('dbi:Sybase', $user, $passwd);
+    $dbh = DBI->connect('dbi:Sybase:', $user, $passwd);
     $dbh->do("use sybsystemprocs");
 
 
@@ -469,7 +522,56 @@ In particular, the return status of a stored procedure is returned
 as CS_STATUS_RESULT (4043), and is normally the last result set that is 
 returned in a stored proc execution.
 
-This should be compatible with other DBI drivers.
+If you add a 
+
+    use DBD::Sybase;
+
+to your script then you can use the symbolic values (CS_xxx_RESULT) 
+instead of the numeric values in your programs, which should make them 
+easier to read.
+
+See also the C<syb_output_param> func() call to handle stored procedures 
+that B<only> return B<OUTPUT> parameters.
+
+=head1 $sth->execute() failure mode behavior
+
+B<THIS HAS CHANGED IN VERSION 0.21!>
+
+DBD::Sybase has the ability to handle multi-statement SQL commands
+in a single batch. For example, you could insert several rows in 
+a single batch like this:
+
+   $sth = $dbh->prepare("
+   insert foo(one, two, three) values(1, 2, 3)
+   insert foo(one, two, three) values(4, 5, 6)
+   insert foo(one, two, three) values(10, 11, 12)
+   insert foo(one, two, three) values(11, 12, 13)
+   ");
+   $sth->execute;
+
+If anyone of the above inserts fails for any reason then $sth->execute
+will return C<undef>, B<HOWEVER> the inserts that didn't fail will still
+be in the database, unless C<AutoCommit> is off.
+
+It's also possible to write a statement like this:
+
+   $sth = $dbh->prepare("
+   insert foo(one, two, three) values(1, 2, 3)
+   select * from bar
+   insert foo(one, two, three) values(10, 11, 12)
+   ");
+   $sth->execute;
+
+If the second C<insert> is the one that fails, then $sth->execute will
+B<NOT> return C<undef>. The error will get flagged after the rows
+from C<bar> have been fetched.
+
+I know that this is not as intuitive as it could be, but I am
+constrained by the Sybase API here.
+
+As an aside, I know that the example above doesn't really make sense, 
+but I need to illustrate this particular sequence... You can also see the 
+t/fail.t test script which shows this particular behavior.
 
 =head1 Sybase Specific Attributes
 
@@ -577,6 +679,19 @@ I<rowcount> value. Setting it back to 0 clears the limit.
 
 Default is for this attribute to be B<0>.
 
+=item syb_do_proc_status (bool)
+
+Setting this attribute causes $sth->execute() to fetch the return status
+of any executed stored procs in the SQL being executed. If the return
+status is non-0 then $sth->execute() will report that the operation 
+failed (ie it will return C<undef>)
+
+Setting this attribute does B<NOT> affect existing $sth handles, only
+those that are created after setting it. To change the behavior of 
+an existing $sth handle use $sth->{syb_do_proc_status}.
+
+The default is for this attribute to be B<off>.
+
 =item syb_oc_version (string)
 
 Returns the identification string of the version of Client Library that
@@ -608,6 +723,10 @@ Returns the numeric result type of the current result set. Useful when
 executing stored procedurs to determine what type of information is
 currently fetchable (normal select rows, output parameters, status results,
 etc...).
+
+=item syb_do_proc_status (bool)
+
+See above (under Database Handle Attributes) for an explanation.
 
 =back
 
@@ -654,6 +773,48 @@ Nov 15 1998 11:30AM
 11:30:11
 
 =back
+
+=head1 Retrieving OUTPUT parameters from stored procedures
+
+Sybase lets you pass define B<OUTPUT> parameters to stored procedures,
+which are a little like parameters passed by reference in C (or perl.)
+
+In Transact-SQL this is done like this
+
+   declare @id_value int, @id_name char(10)
+   exec my_proc @name = 'a string', @number = 1234, @id = @id_value OUTPUT, @out_name = @id_name OUTPUT
+   -- Now @id_value and @id_name are set to whatever 'my_proc' set @id and @out_name to
+
+
+So how can we get at @param using DBD::Sybase? 
+
+If your stored procedure B<only> returns B<OUTPUT> parameters, then you
+can use this shorthand:
+
+    $sth = $dbh->prepare('...');
+    $sth->execute;
+    @results = $sth->func('syb_output_params');
+
+This will return an array for all the OUTPUT parameters in the proc call,
+and will ignore any other results. The array will be undefined if there are 
+no OUTPUT params, or if the stored procedure failed for some reason.
+
+The more generic way looks like this:
+
+   $sth = $dbh->prepare("declare \@id_value int, \@id_name
+      exec my_proc @name = 'a string', @number = 1234, @id = @id_value OUTPUT, @out_name = @id_name OUTPUT");
+   $sth->execute;
+   do {
+      while($d = $sth->fetch) {
+         if($sth->{syb_result_type} == 4042) { # it's a PARAM result
+            $id_value = $d->[0];
+            $id_name  = $d->[1];
+         }
+      }
+   } while($sth->{syb_more_results});
+
+So the OUTPUT params are returned as one row in a special result set.
+
 
 =head1 Multiple active statements on one $dbh
 

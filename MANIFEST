@@ -13,6 +13,7 @@ dbdimp.h
 dbd-sybase.pod
 t/autocommit.t
 t/base.t
+t/fail.t
 t/login.t
 t/main.t
 t/place.t
