@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.4 1997/10/31 19:03:36 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.5 1997/11/03 18:10:48 mpeppler Exp $
 
    Copyright (c) 1997  Michael Peppler
 
@@ -365,18 +365,35 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     char charset[64];
     char packetSize[64];
     char language[64];
+    char ifile[255];
+    char ofile[255];
 
     server[0]     = 0;
     charset[0]    = 0;
     packetSize[0] = 0;
     language[0]   = 0;
+    ifile[0] = 0;
+    
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, server, 64);
 	extractFromDsn("charset=", dsn, charset, 64);
 	extractFromDsn("packetSize=", dsn, packetSize, 64);
 	extractFromDsn("language=", dsn, language, 64);
+	extractFromDsn("interfaces=", dsn, ifile, 255);
     } else {
 	strcpy(dsn, server);
+    }
+
+    if(ifile[0]) {
+	if((retcode = ct_config(context, CS_GET, CS_IFILE, ofile, 255, NULL))
+	   != CS_SUCCEED)
+	    warn("ct_config(CS_GET, CS_IFILE) failed");
+	if(retcode == CS_SUCCEED) {
+	    if((retcode = ct_config(context, CS_SET, CS_IFILE, ifile,
+				    255, NULL)) != CS_SUCCEED)
+	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ifile);
+	    return 0;
+	}
     }
 
     /* Set up the proper locale - to handle character sets, etc. */
@@ -473,9 +490,16 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	    return 0;
 	}
     }
+    if(ifile[0]) {
+	if((retcode = ct_config(context, CS_SET, CS_IFILE, ofile, 255, NULL))
+	   != CS_SUCCEED)
+	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
+    }
 
     imp_dbh->connection = connection;
 
+    /* AutoCommit is ON by default */
+    DBIc_set(imp_dbh,DBIcf_AutoCommit, 1);
 
     DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
     DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/

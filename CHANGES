@@ -1,4 +1,16 @@
-$Id: CHANGES,v 1.3 1997/10/31 19:05:33 mpeppler Exp $
+$Id: CHANGES,v 1.4 1997/11/03 18:14:47 mpeppler Exp $
+
+Release 0.06
+
+	Added ability to specify interfaces file in the connect() 
+	call.
+	Added eg/dbschema.pl (ported from Sybase::DBlib).
+	Fixed incorrect handling of AutoCommit and PrintError
+	attributes to connect().
+
+	Bugs fixed:
+
+	203: Executing sp_helprotect fails.
 
 Release 0.05
 
@@ -10,7 +22,7 @@ Release 0.05
 	in the connect() call.
 	Small Win32 portability patch to Makefile.PL from Matt Herbert.
 
-        Bug fixed:
+        Bugs fixed:
 
 	198: connect failure does not return undef
 	199: DBD::Sybase interaction with Apache::DBI 0.74

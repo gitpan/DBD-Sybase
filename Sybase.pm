@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.4 1997/10/31 19:02:23 mpeppler Exp $
+# $Id: Sybase.pm,v 1.5 1997/11/03 18:10:00 mpeppler Exp $
 
 # Copyright (c) 1996, 1997   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.05';
-    my $Revision = substr(q$Revision: 1.4 $, 10);
+    $VERSION = '0.06';
+    my $Revision = substr(q$Revision: 1.5 $, 10);
 
     require_version DBI 0.89;
 
@@ -58,32 +58,14 @@
 	my $ifile = '';
 	my $server = $dbase || $ENV{DSQUERY} || 'SYBASE';
 
-	# The default according to the DBI spec is to set AutoCommit
-	# to on.
-	if(!defined($attr) || ref($attr) ne 'HASH') {
-	    $attr = {};
-	}
-	if(!exists($attr->{AutoCommit})) {
-	    $attr->{AutoCommit} = 1;
-	}
 
-	# If the interfaces file is located in a non-standard place:
-#	if($attr->{IFILE}) {
-#	    ct_config(CS_GET, CS_IFILE, $ifile);
-#	    ct_config(CS_SET, CS_IFILE, $attr->{IFILE});
-#	}
-	# If the server name is set in $attr
         my($this) = DBI::_new_dbh($drh, {
 	    'Name' => $server,
-	    'User' => $user,
+	    'User' => $user,	
+	    'CURRENT_USER' => $user,
 	    });
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth) or return undef;
-
-	# Reset the interfaces file location if necessary
-#	if($ifile ne '') {
-#	    ct_config(CS_SET, CS_IFILE, $ifile);
-#	}
 
 	$this;
     }
@@ -202,6 +184,13 @@ See the Sybase documentation on how to enable this feature on the server.
      $dbh = DBI->connect("dbi:Sybase:packetSize=8192",
 			 $user, $passwd);
 
+=item interfaces
+
+Specify the location of an alternate I<interfaces> file:
+
+     $dbh = DBI->connect("dbi:Sybase:interfaces=/usr/local/sybase/interfaces",
+			 $user, $passwd);
+
 =back
 
 These different parameters (as well as the server name) can be strung
@@ -231,10 +220,41 @@ where C<my_proc> could return any number of result sets (ie it could
 perform an unknown number of C<select> statements.
 
 I've decided to handle this by returning an empty row at the end
-of each result set - but it you suspect that there may be more data
-from your current query, then you can call any of the C<fetch> routines
-again, and they will return the first row in the next result set if there
-is one, or an empty row it this B<really> was the last row.
+of each result set, and by setting a special Sybase attribute in $sth
+which you can check to see if there is more data to be fetched. The 
+attribute is B<syb_more_results> which you should check to see if you
+need to re-start the C<fetch()> loop.
+
+To make sure all results are fetched, the basic C<fetch> loop can be 
+written like this:
+
+     do {
+         while($d = $sth->fetch) {
+            ... do something with the data
+         }
+     } while($sth->{syb_more_results});
+     $sth->finish;
+
+This should be compatible with other DBI drivers.
+
+=head2 Transactions and Transact-SQL
+
+When $h->{AutoCommit} is I<off> (ie I<0>) the DBD::Sybase driver
+will send a B<BEGIN TRAN> before the first $dbh->prepare(), and
+after each call to $dbh->commit() or $dbh->rollback(). This works
+fine, but will cause any SQL that contains any I<CREATE TABLE>
+statements to fail. These I<CREATE TABLE> statements can be
+burried in a stored procedure somewhere (for example,
+C<sp_helprotect> creates two templ tables when it is run).
+
+If you absolutely want to have manual commits (ie have
+B<AutoCommit> set to 0) and be able to run any arbitrary SQL, then
+you can use C<sp_dboption> to set the C<ddl in tran> option to C<TRUE>.
+However, the Sybase documentation warns that this can cause the system
+to seriouslys slow down as this causes locks to be set on certain
+system tables, and these locks will be held for the duration of the 
+transaction.
+
 
 =head1 BUGS
 

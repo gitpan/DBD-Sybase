@@ -12,3 +12,5 @@ dbdimp.h
 t/base.t
 t/main.t
 eg/Show.cgi
+eg/dbschema.pl
+
