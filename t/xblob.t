@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: xblob.t,v 1.5 2003/12/24 19:15:35 mpeppler Exp $
+# $Id: xblob.t,v 1.6 2004/07/05 08:02:32 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -12,7 +12,7 @@ use _test;
 
 use vars qw($Pwd $Uid $Srv $Db $loaded);
 
-BEGIN {print "1..6\n";}
+BEGIN {print "1..10\n";}
 END {print "not ok 1\n" unless $loaded;}
 use DBI qw(:sql_types);
 $loaded = 1;
@@ -100,3 +100,82 @@ $rc = $dbh->do("drop table blob_test");
 
 $rc and print "ok 6\n"
     or print "not ok 6\n";
+
+if($DBI::VERSION >= 1.34) {
+  my $rc = $dbh->do("create table blob_test(id int, data image null, foo varchar(30))");
+  $rc and print "ok 7\n"
+    or print "not ok 7\n";
+
+  open(IN, "t/screen.jpg") || die "Can't open t/screen.jpg: $!";
+  binmode(IN);
+  my $image;
+  {
+    local $/;
+    $image = <IN>;
+  }
+  close(IN);
+  my $heximg = unpack('H*', $image);
+  $rc = $dbh->do("insert blob_test(id, data, foo) values(1, '', 'screen.jpg')");
+  $rc and print "ok 8\n"
+    or print "not ok 8\n";
+
+#DBI->trace(3);
+  my $sth = $dbh->prepare("select id, data from blob_test");
+#$sth->{syb_no_bind_blob} = 1;
+  $sth->execute;
+  while($sth->fetch) {
+#    my $d;
+#    $sth->func(2, \$d, 0, 'ct_get_data');
+    
+    $sth->syb_ct_data_info('CS_GET', 2) || print $sth->errstr, "\n";
+  }
+  $sth->syb_ct_prepare_send() || print $sth->errstr, "\n";
+  $sth->syb_ct_data_info('CS_SET', 2, {total_txtlen => length($image), log_on_update=>1}) || print $sth->errstr, "\n";
+  $sth->syb_ct_send_data($image, length($image)) || print $sth->errstr, "\n";
+  $sth->syb_ct_finish_send() || print $sth->errstr, "\n";
+
+#$dbh->{LongReadLen} = 100000;
+  $sth = $dbh->prepare("select id, data from blob_test");
+  $dbh->{LongReadLen} = 100000;
+#DBI->trace(3);
+  $sth->{syb_no_bind_blob} = 1;
+  $sth->execute;
+  my $heximg2 = '';
+  my $size = 0;
+  while(my $d = $sth->fetch) {
+    my $data;
+#    open(OUT, ">/tmp/mp_conf.jpg") || die "Can't open /tmp/mp_conf.jpg: $!";
+    while(1) {
+	my $read = $sth->syb_ct_get_data(2, \$data, 1024);
+	$heximg2 .= unpack('H*', $data);
+	$size += $read;
+	last unless $read == 1024;
+#	print OUT $data;
+    }
+#    close(OUT);
+  }
+
+#warn "Got $size bytes\n";
+
+  $heximg eq $heximg2 and print "ok 9\n"
+    or print "not ok 9\n";
+
+  mkdir("./tmp");
+  open(ONE, ">./tmp/hex1");
+  binmode(ONE);
+  print ONE $heximg;
+  close(ONE);
+  open(TWO, ">./tmp/hex2");
+  binmode(TWO);
+  print TWO $heximg2;
+  close(TWO);
+
+  $rc = $dbh->do("drop table blob_test");
+
+  $rc and print "ok 10\n"
+    or print "not ok 10\n";
+} else {
+  for(my $i = 7; $i <= 10; ++$i) {
+    print "ok $i\n";
+  }
+}

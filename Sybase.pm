@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.61 2004/06/22 12:41:12 mpeppler Exp $
+# $Id: Sybase.pm,v 1.72 2004/09/22 06:36:25 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04';
-    my $Revision = substr(q$Revision: 1.61 $, 10);
+    $VERSION = '1.04.8';
+    my $Revision = substr(q$Revision: 1.72 $, 10);
 
     require_version DBI 1.30;
 
@@ -52,8 +52,15 @@
 	    });
 
 	if($DBI::VERSION >= 1.34 && !$DBD::Sybase::init_done) {
-	    #	*syb_nsql = *nsql;
 	    DBD::Sybase::db->install_method('syb_nsql');
+	    DBD::Sybase::db->install_method('syb_date_fmt');
+	    DBD::Sybase::st->install_method('syb_ct_get_data');
+	    DBD::Sybase::st->install_method('syb_ct_data_info');
+	    DBD::Sybase::st->install_method('syb_ct_send_data');
+	    DBD::Sybase::st->install_method('syb_ct_prepare_send');
+	    DBD::Sybase::st->install_method('syb_ct_finish_send');
+	    DBD::Sybase::st->install_method('syb_output_params');
+	    DBD::Sybase::st->install_method('syb_describe');
 	    ++$DBD::Sybase::init_done;
 	}
 
@@ -312,6 +319,12 @@
 	$sth;
     }
 
+    sub begin_work {
+        my $dbh = shift;
+
+	return $dbh->STORE('AutoCommit', 0);
+    }
+
     sub ping {
 	my $dbh = shift;
 	return 0 if DBD::Sybase::db::_isdead($dbh);
@@ -511,7 +524,6 @@
     
     if($DBI::VERSION >= 1.34) {
 	*syb_nsql = *nsql;
-#	DBD::Sybase::db->install_method('syb_nsql');
     }
 }
 
@@ -565,6 +577,13 @@
 	$status;
     }
 	
+#    if($DBI::VERSION >= 1.34) {
+#	*syb_ct_get_data = *ct_get_data;
+#	*syb_ct_data_info = *ct_data_info;
+#	*syb_ct_send_data = *ct_send_data;
+#	*syb_ct_prepare_send = *ct_prepare_send;
+#	*syb_ct_finish_send = *ct_finish_send;
+#    }
 		    
 }
 
@@ -608,7 +627,7 @@ C<BEGIN{}> block:
        $ENV{SYBASE} = '/opt/sybase/11.0.2';
    }
 
-   $dbh = DBI->connect('dbi:Sybase:', $user, $passwd);
+   my $dbh = DBI->connect('dbi:Sybase:', $user, $passwd);
 
 
 =head2 Specifying the server name
@@ -651,7 +670,7 @@ connect to. This will by-pass the server name lookup in the interfaces file.
 This is useful in the case where the server hasn't been entered in the 
 interfaces file.
 
-     $dbh = DBI->connect("dbi:Sybase:host=db1.domain.com;port-4100",
+     $dbh = DBI->connect("dbi:Sybase:host=db1.domain.com;port=4100",
 			 $user, $passwd);
 
 =item maxConnect
@@ -803,6 +822,14 @@ connection negotiation:
 
   $dbh->DBI->connect("dbi:Sybase:sslCAFile=/usr/local/sybase/trusted.txt.ENGINEERING", $user, $password); 
 
+=item bulkLogin
+
+Set this to 1 if the connection is going to be used for a bulk-load
+operation (see I<Experimental Bulk-Load functionality> elsewhere in this
+document.)
+
+  $dbh->DBI->connect("dbi:Sybase:bulkLogin=1", $user, $password); 
+
 =back
 
 These different parameters (as well as the server name) can be strung
@@ -869,7 +896,7 @@ to your script then you can use the symbolic values (CS_xxx_RESULT)
 instead of the numeric values in your programs, which should make them 
 easier to read.
 
-See also the C<syb_output_param> func() call to handle stored procedures 
+See also the C<$sth->syb_output_params> call to handle stored procedures 
 that B<only> return B<OUTPUT> parameters.
 
 =head1 $sth->execute() failure mode behavior
@@ -1038,7 +1065,8 @@ not supported when using DBD::Sybase to connect to a MS-SQL server.
 =item syb_chained_txn (bool)
 
 If set then we use CHAINED transactions when AutoCommit is off. 
-Otherwise we issue an explicit BEGIN TRAN as needed. The default is off.
+Otherwise we issue an explicit BEGIN TRAN as needed. The default is on
+if it is supported by the server.
 
 This attribute should usually be used only during the connect() call:
 
@@ -1128,8 +1156,6 @@ Default: off
 
 =item syb_bind_empty_string_as_null (bool)
 
-B<New in 0.95>
-
 If this attribute is set then an empty string (i.e. "") passed as
 a parameter to an $sth->execute() call will be converted to a NULL
 value. If the attribute is not set then an empty string is converted to
@@ -1138,8 +1164,6 @@ a single space.
 Default: off
 
 =item syb_cancel_request_on_error (bool)
-
-B<New in 0.95>
 
 If this attribute is set then a failure in a multi-statement request
 (for example, a stored procedure execution) will cause $sth->execute()
@@ -1150,6 +1174,12 @@ The default value (B<on>) changes the behavior that DBD::Sybase exhibited
 up to version 0.94. 
 
 Default: on
+
+=item syb_date_fmt (string)
+
+Defines the date/time conversion string when fetching data. See the 
+entry for the C<syb_date_fmt()> method elsewhere in this document for a
+description of the available formats.
 
 =back
 
@@ -1181,13 +1211,13 @@ when calling $sth->fetch (or any variation).
 
 Instead, you would use
 
-    $sth->func($column, \$data, $size, 'ct_get_data');
+    $sth->syb_ct_get_data($column, \$data, $size);
 
 to retrieve the IMAGE or TEXT data. If $size is 0 then the entire item is
 fetched, otherwis  you can call this in a loop to fetch chunks of data:
 
     while(1) {
-	$sth->func($column, \$data, 1024, 'ct_get_data');
+        $sth->syb_ct_get_data($column, \$data, 1024);
 	last unless $data;
 	print OUT $data;
     }
@@ -1211,12 +1241,11 @@ elsewhere in this document.
 
 By default DBD::Sybase will return I<DATETIME> and I<SMALLDATETIME>
 columns in the I<Nov 15 1998 11:13AM> format. This can be changed
-via a special B<_date_fmt()> function that is accessed via the $dbh->func()
-method.
+via a private B<syb_date_fmt()> method.
 
 The syntax is
 
-    $dbh->func($fmt, '_date_fmt');
+    $dbh->syb_date_fmt($fmt);
 
 where $fmt is a string representing the format that you want to apply.
 
@@ -1257,6 +1286,20 @@ Nov 15 1998 11:30AM
 
 11:30:11
 
+=item ISO
+
+2004-08-21 14:36:48.080
+
+=item ISO_strict
+
+2004-08-21T14:36:48.080Z
+
+Note that Sybase has no concept of a timezone, so the trailing "Z" is
+really not correct (assumes that the time is in UTC). However, there
+is no guarantee that the client and the server run in the same timezone,
+so assuming the timezone of the client isn't really a valid option
+either.
+
 =back
 
 =head1 Retrieving OUTPUT parameters from stored procedures
@@ -1278,7 +1321,7 @@ can use this shorthand:
 
     $sth = $dbh->prepare('...');
     $sth->execute;
-    @results = $sth->func('syb_output_params');
+    @results = $sth->syb_output_params();
 
 This will return an array for all the OUTPUT parameters in the proc call,
 and will ignore any other results. The array will be undefined if there are 
@@ -1342,7 +1385,16 @@ There is an alternative way to access and update IMAGE/TEXT data
 using the natice OpenClient API. This is done via $h->func() calls,
 and is, unfortunately, a little convoluted.
 
-=head2 Handling IMAGE/TEXT data with ct_get_data()/ct_send_data()
+=head2 Handling IMAGE/TEXT data with syb_ct_get_data()/syb_ct_send_data()
+
+With DBI 1.34 and later you can call all of these ct_xxx() calls directly
+as statement handle methods by prefixing them with syb_, so for example
+
+    $sth->func($col, $dataref, $numbytes, 'ct_fetch_data');
+
+becomes
+
+    $sth->syb_ct_fetch_data($col, $dataref, $numbytes);
 
 =over 4
 
@@ -1366,20 +1418,23 @@ The call sequence is:
     $sth->execute;
     while($d = $sth->fetchrow_arrayref) {
        # The data is in the second column
-       $len = $sth->func(2, \$img, 0, 'ct_get_data');
+       $len = $sth->syb_ct_get_data(2, \$img, 0);
+       # with DBI 1.33 and earlier, this would be
+       # $len = $sth->func(2, \$img, 0, 'ct_get_data');
     }
 
 ct_get_data() returns the number of bytes that were effectively fetched,
 so that when fetching chunks you can do something like this:
 
    while(1) {
-      $len = $sth->func(2, $imgchunk, 1024, 'ct_get_data');
+      $len = $sth->syb_ct_get_data(2, $imgchunk, 1024);
       ... do something with the $imgchunk ...
       last if $len != 1024;
    }
 
 To explain further: Sybase stores IMAGE/TEXT data separately from 
-normal table data, in a chain of 2k blocks. To update an IMAGE/TEXT
+normal table data, in a chain of pagesize blocks (a Sybase database page
+is defined at the server level, and can be 2k, 4k, 8k or 16k in size.) To update an IMAGE/TEXT
 column Sybase needs to find the head of this chain, which is known as
 the "text pointer". As there is no I<where> clause when the ct_send_data()
 API is used we need to retrieve the I<text pointer> for the correct
@@ -1427,24 +1482,25 @@ up via ct_prepare_send() and ct_data_info() for this to work. ct_send_data()
 returns B<TRUE> on success, and B<FALSE> on failure.
 
 In this example, we wish to update the data in the I<img> column
-where the I<id> column is 1:
+where the I<id> column is 1. We assume that DBI is at version 1.34 or
+later and use the direct method calls:
 
   # first we need to find the CS_IODESC data for the data
   $sth = $dbh->prepare("select img from imgtable where id = 1");
   $sth->execute;
   while($sth->fetch) {    # don't care about the data!
-      $sth->func('CS_GET', 1, 'ct_data_info');
+      $sth->syb_ct_data_info('CS_GET', 1);
   }
 
   # OK - we have the CS_IODESC values, so do the update:
-  $sth->func('ct_prepare_send');
+  $sth->syb_ct_prepare_send();
   # Set the size of the new data item (that we are inserting), and make
   # the operation unlogged
-  $sth->func('CS_SET', 1, {total_txtlen => length($image), log_on_update => 0}, 'ct_data_info');
+  $sth->syb_ct_data_info('CS_SET', 1, {total_txtlen => length($image), log_on_update => 0});
   # now transfer the data (in a single chunk, this time)
-  $sth->func($image, length($image), 'ct_send_data');
+  $sth->syb_ct_send_data($image, length($image));
   # commit the operation
-  $sth->func('ct_finish_send');
+  $sth->ct_finish_send();
 
 The ct_send_data() call can also transfer the data in chunks, however you 
 must know the total size of the image before you start the insert. For example:
@@ -1455,14 +1511,14 @@ must know the total size of the image before you start the insert. For example:
   $sth = $dbh->prepare("select img from imgtable where id = 1");
   $sth->execute;
   while($sth->fetch) {    # don't care about the data!
-      $sth->func('CS_GET', 1, 'ct_data_info');
+      $sth->syb_ct_data_info('CS_GET', 1);
   }
 
   # OK - we have the CS_IODESC values, so do the update:
-  $sth->func('ct_prepare_send');
+  $sth->syb_ct_prepare_send();
   # Set the size of the new data item (that we are inserting), and make
   # the operation unlogged
-  $sth->func('CS_SET', 1, {total_txtlen => $size, log_on_update => 0}, 'ct_data_info');
+  $sth->syb_ct_data_info('CS_SET', 1, {total_txtlen => $size, log_on_update => 0});
 
   # open the file, and store it in the db in 1024 byte chunks.
   open(IN, $file) || die "Can't open $file: $!";
@@ -1471,11 +1527,11 @@ must know the total size of the image before you start the insert. For example:
       $bytesread = read(IN, $buff, $to_read);
       $size -= $bytesread;
 
-      $sth->func($buff, $bytesread, 'ct_send_data');
+      $sth->syb_ct_send_data($buff, $bytesread);
   }
   close(IN);
   # commit the operation
-  $sth->func('ct_finish_send');
+  $sth->syb_ct_finish_send();
       
 
 =back
@@ -1506,10 +1562,7 @@ be held on certain system tables for the duration of the transaction.
 If $h->{syb_chained_txn} is I<on>, then DBD::Sybase sets the
 I<CHAINED> option, which tells Sybase not to commit anything automatically.
 Again, you will need to call $dbh->commit() to make any changes to the data
-permanent. In this case Sybase will not let you issue I<BEGIN TRAN> 
-statements in the SQL code that is executed, so if you need to execute
-stored procedures that have I<BEGIN TRAN> statements in them you 
-must use $h->{syb_chained_txn} = 0, or $h->{AutoCommit} = 1.
+permanent. 
 
 =head2 Behavior of $dbh->last_insert_id
 
@@ -1671,9 +1724,7 @@ at http://sybooks.sybase.com/
 
 =head1 Stored Procedures and Placeholders
 
-B<NOTE: This feature is experimental>
-
-This version of DBD::Sybase introduces the ability to use ?-style
+DBD::Sybase has the ability to use ?-style
 placeholders as parameters to stored proc calls. The requirements are
 that the stored procedure call be initiated with an "exec" and that it be
 the only statement in the batch that is being prepared():
@@ -1703,7 +1754,7 @@ fetch() and/or $sth->func('syb_output_params'):
 
     my $sth = $dbh->prepare("exec my_proc \@p1 = ?, \@p2 = ?, \@p3 = ? OUTPUT ");
     $sth->execute('one', 'two', 'three');
-    my (@data) = $sth->func('syb_output_params');
+    my (@data) = $sth->syb_output_params();
 
 DBD::Sybase does not attempt to figure out the correct parameter type
 for each parameter (it would be possible to do this for most cases, but
@@ -1746,6 +1797,137 @@ setting the I<arithabort> option:
 See the I<set> command in the Sybase Adaptive Server Enterprise Reference 
 Manual for more information on the set command and on the arithabort option.
 
+=head1 Other Private Methods
+
+=head2 DBD::Sybase private Statement Handle Methods
+
+=over 4
+
+=item @data = $sth->syb_describe([$assoc])
+
+Retrieves the description of each of the output columns of the current 
+result set. Each element of the returned array is a reference
+to a hash that describes the column. The following fields are set:
+NAME, TYPE, SYBTYPE, MAXLENGTH, SCALE, PRECISION, STATUS.
+
+You could use it like this:
+
+   my $sth = $dbh->prepare("select name, uid from sysusers");
+   $sth->execute;
+   my @description = $sth->syb_describe;
+   print "$description[0]->{NAME}\n";         # prints ’name’
+   print "$description[0]->{MAXLENGTH}\n";    # prints 30
+   ....
+
+   while(my $row = $sth->fetch) {
+      ....
+   }
+
+The STATUS field is a string which can be tested for the following
+values: CS_CANBENULL, CS_HIDDEN, CS_IDENTITY, CS_KEY, CS_VERSION_KEY, 
+CS_TIMESTAMP and CS_UPDATABLE. See table 3-46 of the Open Client Client 
+Library Reference Manual for a description of each of these values.
+
+The TYPE field is the data type that Sybase::CTlib converts the
+column to when retrieving the data, so a DATETIME column will be
+returned as a CS_CHAR_TYPE column.
+
+The SYBTYPE field is the real Sybase data type for this column.
+
+I<Note that the symbolic values of the CS_xxx symbols isn't available
+yet in DBD::Sybase.>
+
+
+=back
+
+=head1 Experimental Bulk-Load Functionality
+
+Starting with release 1.04.2 DBD::Sybase has the ability to use Sybase's
+BLK (bulk-loading) API to perform fast data loads. Basic usage is as follows:
+
+  my $dbh = DBI->connect('dbi:Sybase:server=MY_SERVER;bulkLogin=1', $user, $pwd);
+
+  $dbh->begin_work;  # optional.
+  my $sth = $dbh->prepare("insert the_table values(?, ?, ?, ?, ?)",
+                          {syb_bcp_attribs => { identity_flag => 0,
+                                               identity_column => 0 }}});
+  while(<DATA>) {
+    chomp;
+    my @row = split(/\|/, $_);   # assume a pipe-delimited file...
+    $sth->execute(@row);
+  }
+  $dbh->commit;
+  print "Sent ", $sth->rows, " to the server\n";
+  $sth->finish;
+
+First, you need to specify the new I<bulkLogin> attribute in the connection
+string, which turns on the CS_BULK_LOGIN property for the connection. Without
+this property the BLK api will not be functional.
+
+You call $dbh->prepare() with a regular INSERT statement and the 
+special I<syb_bcp_attribs> attribute to turn on BLK handling of the data.
+The I<identity_flag> sub-attribute can be set to 1 if your source data
+includes the values for the target table's IDENTITY column. If the
+target table has an IDENTITY column but you want the insert operation to
+generate a new value for each row then leave I<identity_flag> at 0, but set
+I<identity_col> to the column number of the identity column (it's usually
+the first column in the table, but not always.)
+
+The number of placeholders in the INSERT statement I<must> correspond to
+the number of columns in the table, and the input data I<must> be in the
+same order as the table's physical column order. Any column list in the
+INSERT statement (i.e. I<insert table(a, b, c,...) values(...)> is ignored.
+
+The value of AutoCommit is ignored for BLK operations - rows are only 
+commited when you call $dbh->commit.
+
+You can call $dbh->rollback to cancel any uncommited rows, but this I<also>
+cancels the rest of the BLK operation: any attempt to load rows to the
+server after a call to $dbh->rollback() will fail.
+
+If a row fails to load due to a CLIENT side error (such as a data conversion
+error) then $sth->execute() will return a failure (i.e. false) and
+$sth->errstr will have the reason for the error.
+
+If a row fails on the SERVER side (for example due to a duplicate row
+error) then the entire batch (i.e. between two $dbh->commit() calls) 
+will fail. This is normal behavior for BLK/bcp.
+
+The Bulk-Load API is very sensitive to data conversion issues, as all the
+conversions are handled on the client side, and the row is pre-formatted
+before being sent to the server. By default any conversion that is flagged
+by Sybase's cs_convert() call will result in a failed row. Some of these
+conversion errors are patently fatal (e.g. converting 'Feb 30 2001' to a
+DATETIME value...), while others are debatable (e.g. converting 123.456 to
+a NUMERIC(6,2) which results in a loss of precision). The default behavior
+of failing any row that has a conversion error in it can be modified by 
+using a special error handler. Returning 0 from this handler
+tells DBD::Sybase to fail this row, and returning 1 means that we still
+want to try to send the row to the server (obviously Sybase's internal
+code can still fail the row at that point.)
+You set the handler like this:
+
+    DBD::Sybase::syb_set_cslib_cb(\&handler);
+
+and a sample handler:
+
+   sub cslib_handler {
+     my ($layer, $origin, $severity, $errno, $errmsg, $osmsg, $blkmsg) = @_;
+     
+     print "Layer: $layer, Origin: $origin, Severity: $severity, Error: $errno\n";
+     print $msg;
+     print $osmsg if($osmsg);
+     print $blkmsg if $blkmsg;
+
+     return 1 if($errno == 36)
+
+     return 0;
+   }
+
+Please see the t/xblk.t test script for some examples.
+
+Reminder - this is an I<experimental> implementation. It may change
+in the future, and it could be buggy.
 
 =head1 Using DBD::Sybase with MS-SQL 
 
@@ -1791,7 +1973,7 @@ being returned by the routine (to allow processing of large result sets,
 for example).
 
 C<nsql> also checks three special attributes to enable deadlock retry logic
-\(I<Note> none of these attributes have any effect anywhere else at the moment):
+(I<Note> none of these attributes have any effect anywhere else at the moment):
 
 =over 4
 

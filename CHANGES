@@ -1,4 +1,15 @@
-$Id: CHANGES,v 1.55 2004/06/22 12:33:22 mpeppler Exp $
+$Id: CHANGES,v 1.61 2004/09/21 12:51:56 mpeppler Exp $
+
+Release 1.05
+
+        Install private statement handle methods for TEXT/IMAGE handling
+        to avoid $h->func() calls, and update documentation.
+        Implement experimental BLK API via prepare/execute loop.
+	Change default "AutoCommit" off mode from explicit transactions
+	to using the "chained" mode if it is available.
+	Add $sth->syb_describe() call, taken from Sybase::CTlib's 
+	ct_describe().
+	Add ISO8601 date/time format for output.
 
 Release 1.04
 

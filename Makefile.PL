@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.29 2004/06/11 11:52:00 mpeppler Exp $
+# $Id: Makefile.PL,v 1.34 2004/09/21 12:51:56 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -21,6 +21,8 @@ $written_pwd_file = 'PWD';
 
 my $file;
 GetOptions('--file' => \$file);
+
+select(STDOUT); $| = 1;
 
 configure();
 
@@ -119,19 +121,27 @@ sub configure {
     }
     die "Can't find the Client Library include files under $SYBASE" unless($inc_found);
 
+    my $version = getLibVersion($SYBASE);
+#    if(!$version || $version lt '12') {
+      #print "FreeTDS or older Client Library. Enabling CS-Lib Callbacks\n";
+      #$inc_string .= " -DUSE_CSLIB_CB=1";
+#    }
+
+    checkChainedAutoCommit();
+
     if($^O eq 'MSWin32') {
-	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib $attr{EXTRA_LIBS} -lm";
+	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
     } elsif($^O eq 'VMS') {
-	$lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb $attr{EXTRA_LIBS}";
+	$lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb -llibblk.olb $attr{EXTRA_LIBS}";
     } else {
-	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS});
+	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS}, $version);
 	if($file) {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -ldl -lm";
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl -lblk $attr{EXTRA_LIBS} -ldl -lm";
 	} else {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $extra -ldl -lm";
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl -lblk $extra -ldl -lm";
 	}
 	if($newlibnames) {
-	    foreach (qw(ct cs tcl comn intl)) {
+	    foreach (qw(ct cs tcl comn intl blk)) {
 		$lib_string =~ s/-l$_/-lsyb$_/;
 	    }
 	} elsif($^O =~ /linux|freebsd/i) {
@@ -224,22 +234,42 @@ sub configure {
     }
 }
 
-sub getExtraLibs {
+sub getLibVersion {
     my $dir = shift;
-    my $cfg = shift;
 
     my $lib = "$dir/lib";
-    my @files = qw(libct.a libsybct.a libct64.a libsybct64.a);
+    opendir(DIR, $lib);
+    my @files = grep(/lib(syb)?ct\./, readdir(DIR));
+    closedir(DIR);
     my $file;
     foreach (@files) {
 	$file = "$lib/$_";
 	last if -e $file;
     }
 
-    my $version = `strings $file`;
-    $version =~ /Sybase Client-Library\/([^\/]+)\//;
-    $version = $1;
-    print "Sybase OpenClient $version found.\n";
+    open(IN, $file) || die "Can't open $file: $!";
+    binmode(IN);
+    my $version;
+    while(<IN>) {
+      if(/Sybase Client-Library\/([^\/]+)\//) {
+	$version = $1;
+	last;
+      }
+    }
+    close(IN);
+    if(!$version) {
+      print "Unknown Client Library version - assuming FreeTDS.\n";
+    } else {
+      print "Sybase OpenClient $version found.\n";
+    }
+
+    return $version;
+}
+
+sub getExtraLibs {
+    my $dir = shift;
+    my $cfg = shift;
+    my $version = shift;
 
     opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
     my %files = map { $_ =~ s/lib([^\.]+)\..*/$1/; $_ => 1 } grep(/lib/ && -f "$dir/lib/$_", readdir(DIR));
@@ -295,7 +325,6 @@ sub configPwd {
 	$pwd{$key} = $val || "undef";
     }
     close(IN);
-    select(STDOUT); $| = 1;
 
     print "The DBD::Sybase module need access to a Sybase server to run the tests.\n";
     print "To clear an entry please enter 'undef'\n";
@@ -332,6 +361,25 @@ EOF
     }
     close(OUT);
 }
+
+sub checkChainedAutoCommit {
+  print <<EOF;
+
+By default DBD::Sybase 1.05 and later use the 'CHAINED' mode (where available)
+when 'AutoCommit' is turned off. Versions 1.04 and older instead managed
+the transactions explicitly with a 'BEGIN TRAN' before the first DML
+statement. Using the 'CHAINED' mode is preferable as it is the way that
+Sybase implements AutoCommit handling for both its ODBC and JDBC drivers.
+
+EOF
+  print "Use 'CHAINED' mode by default (Y/N) [Y]: ";
+  my $ans = getAns(0);
+  if($ans and $ans !~ /^y/i) {
+    $inc_string .= " -DNO_CHAINED_TRAN=1";
+  }
+  print "\n";
+}
+
 
 sub getAns {
     my $flag = shift;

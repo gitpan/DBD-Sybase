@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.11 2004/06/22 12:33:22 mpeppler Exp $
+# $Id: main.t,v 1.13 2004/07/23 06:51:45 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -158,17 +158,18 @@ do {
 } while($sth->{syb_more_results});
 
 # Test last_insert_id:
-if(0) {
+if($DBI::VERSION > 1.42) {
+    # This will only work w/ DBI >= 1.43
     $dbh->do("create table #idtest(id numeric(9,0) identity, c varchar(20))");
     $dbh->do("insert #idtest (c) values ('123456')");
-    #DBI->trace(10);
-    my $value = $dbh->last_insert_id();
+#    DBI->trace(10);
+    my $value = $dbh->last_insert_id(undef,undef,undef,undef);
     if($value > 0) {
 	print "ok 17\n";
     } else {
 	print "not ok 17\n";
     }
-    #DBI->trace(0);
+#    DBI->trace(0);
 } else {
     print "ok 17\n";
 }
@@ -188,6 +189,15 @@ if(exists($type_info[0]->{DATA_TYPE})) {
     print "not ok 19\n";
 }
 print Dumper(\@type_info);
+
+if($DBI::VERSION >= 1.34) {
+  my $sth = $dbh->prepare("select * from master..sysprocesses");
+  $sth->execute;
+  my @desc = $sth->syb_describe;
+  print Dumper(\@desc);
+} else {
+  
+}
 
 $dbh->disconnect;
 

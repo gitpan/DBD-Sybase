@@ -1,4 +1,4 @@
-/* $Id: Sybase.h,v 1.8 2004/01/06 01:29:56 mpeppler Exp $
+/* $Id: Sybase.h,v 1.11 2004/08/04 08:51:37 mpeppler Exp $
 
    Copyright (c) 1997 - 2004 Michael Peppler
 
@@ -12,8 +12,10 @@
 #define NEED_DBIXS_VERSION 8
 
 #include <DBIXS.h>		/* installed by the DBI module	*/
+#include "dbivport.h"
 
 #include <ctpublic.h>
+#include <bkpublic.h>
 
 /* These defines avoid name clashes for multiple statically linked DBD's    */
  
@@ -117,6 +119,7 @@ int      syb_thread_enabled _((void));
 int      syb_set_timeout _((int timeout));
 int      syb_db_date_fmt _((SV *, imp_dbh_t *, char *));
 
+SV *     syb_set_cslib_cb ( SV *cb);
 
 
 #endif /* defined Sybase_h */

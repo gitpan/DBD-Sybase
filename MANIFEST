@@ -23,11 +23,12 @@ t/exec.t
 t/nsql.t
 t/thread.t
 t/xblob.t
+t/xblk.t
 t/screen.jpg
 t/_test.pm
 eg/README
 eg/Show.cgi
 eg/dbschema.pl
 eg/check-space.pl
-
+dbivport.h
 META.yml                                 Module meta-data (added by MakeMaker)

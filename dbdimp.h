@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.27 2004/06/11 11:52:00 mpeppler Exp $
+   $Id: dbdimp.h,v 1.31 2004/09/21 12:51:56 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -28,11 +28,14 @@ typedef struct _col_data
 	CS_CHAR	*c;
 	CS_INT i;
 	CS_FLOAT f;
-/*	CS_DATETIME dt;
+	CS_DATETIME dt;
 	CS_MONEY mn;
-	CS_NUMERIC num; */
+	CS_NUMERIC num;
+        CS_VOID *p;
     } value;
+    int         v_alloc;
     CS_INT	valuelen;
+    CS_VOID     *ptr;
 } ColData;
 
 
@@ -56,6 +59,7 @@ struct imp_dbh_st {
     int       quotedIdentifier;
     int	      useBin0x;
     int       binaryImage;
+    int       dateFmt;		/* 0 for Sybase native, 1 for ISO8601 */
 
     int lasterr;
     int lastsev;
@@ -81,6 +85,7 @@ struct imp_dbh_st {
     char      port[20];		/* for use with CS_SERVERADDR */
     char      maxConnect[25];
     char      sslCAFile[255];
+    char      blkLogin[16];
 
     char      serverVersion[15];
 
@@ -107,6 +112,8 @@ struct imp_dbh_st {
     int       alwaysForceFailure; /* PR/471 */
 
     char      *sql;
+
+    struct imp_sth_st *imp_sth;	/* needed for BCP handling */
 };
 
 typedef struct phs_st {
@@ -162,6 +169,14 @@ struct imp_sth_st {
 
     /* Select Column Output Details	*/
     int        done_desc;   /* have we described this sth yet ?	*/
+
+    /* BCP functionality */
+    int bcpFlag;
+    int bcpIdentityFlag;
+    int bcpIdentityCol;
+    CS_BLKDESC *bcp_desc;
+    int bcpRows;		/* incremented for each successful call to blk_rowxfer, set to -1 when blk_done(CS_BLK_CANCEL) has been called. */
+    int bcpAutoCommit;
 
     /* (In/)Out Parameter Details */
     int  has_inout_params;
