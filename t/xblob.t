@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: xblob.t,v 1.4 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: xblob.t,v 1.5 2003/12/24 19:15:35 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -33,7 +33,12 @@ $rc and print "ok 3\n"
     or print "not ok 3\n";
 
 open(IN, "t/screen.jpg") || die "Can't open t/screen.jpg: $!";
-my $image = join('', <IN>);
+binmode(IN);
+my $image;
+{
+    local $/;
+    $image = <IN>;
+}
 close(IN);
 my $heximg = unpack('H*', $image);
 $rc = $dbh->do("insert blob_test(id, data, foo) values(1, '', 'screen.jpg')");
@@ -81,13 +86,15 @@ while(my $d = $sth->fetch) {
 $heximg eq $heximg2 and print "ok 5\n"
     or print "not ok 5\n";
 
-open(ONE, ">/tmp/hex1");
+mkdir("./tmp");
+open(ONE, ">./tmp/hex1");
+binmode(ONE);
 print ONE $heximg;
 close(ONE);
-open(TWO, ">/tmp/hex2");
+open(TWO, ">./tmp/hex2");
+binmode(TWO);
 print TWO $heximg2;
 close(TWO);
-
 
 $rc = $dbh->do("drop table blob_test");
 

@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.45 2003/09/08 21:30:22 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.46 2003/12/24 19:15:35 mpeppler Exp $
 
    Copyright (c) 1997-2003  Michael Peppler
 
@@ -67,6 +67,7 @@ static CS_CONNECTION *syb_db_connect _((struct imp_dbh_st *));
 static int syb_db_use _((imp_dbh_t *, CS_CONNECTION *));
 static int syb_st_describe_proc _((imp_sth_t *, char *));
 static void syb_set_error(imp_dbh_t *, int, char *);
+static char *my_strdup _((char *));
 
 
 static CS_CONTEXT *context;
@@ -649,7 +650,7 @@ void syb_init(dbistate)
 	if((p = strchr(out, '\n')))
 	    *p = 0;
 	
-	ocVersion = strdup(out);
+	ocVersion = my_strdup(out);
     }
 
     if((sv = perl_get_sv("0", FALSE)))
@@ -1006,14 +1007,12 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_con_props(CS_APPNAME, %s) failed", imp_dbh->scriptName);
 	    return 0;
 	}
-	if(*imp_dbh->hostname) {
-	    if((retcode = ct_con_props(connection, CS_SET, CS_HOSTNAME, 
-	       *imp_dbh->hostname ? imp_dbh->hostname : hostname,
-				       CS_NULLTERM, NULL)) != CS_SUCCEED)
-	    {
-		warn("ct_con_props(CS_HOSTNAME, %s) failed", imp_dbh->hostname);
-		return 0;
-	    }
+	if((retcode = ct_con_props(connection, CS_SET, CS_HOSTNAME, 
+		   *imp_dbh->hostname ? imp_dbh->hostname : hostname,
+				   CS_NULLTERM, NULL)) != CS_SUCCEED)
+	{
+	    warn("ct_con_props(CS_HOSTNAME, %s) failed", imp_dbh->hostname);
+	    return 0;
 	}
     }
     if(retcode == CS_SUCCEED)
@@ -1628,6 +1627,12 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
 
+    if (kl == 18 && strEQ(key, "syb_server_version")) {
+	strncpy(imp_dbh->serverVersion, SvPV(valuesv, na), 15);
+
+	return TRUE;
+    }
+
     return FALSE;
 }
 
@@ -1767,6 +1772,9 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     }
     if (kl == 27 && strEQ(key, "syb_cancel_request_on_error")) {
 	retsv = newSViv(imp_dbh->alwaysForceFailure);
+    }
+    if (kl == 18 && strEQ(key, "syb_server_version")) {
+	retsv = newSVpv(imp_dbh->serverVersion, 0);
     }
 
     if (retsv == &sv_yes || retsv == &sv_no || retsv == &sv_undef)
@@ -1988,8 +1996,13 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    if(ret != CS_SUCCEED || val == CS_FALSE)
 		croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
 	    
-	    sprintf(imp_sth->dyn_id, "DBD_%d_%x", getpid(), (int)tt++);
-	    
+
+	    if(strGE(imp_dbh->serverVersion, "11.9")) {
+		sprintf(imp_sth->dyn_id, "DBD%d_%x", getpid(), (int)tt++);
+	    } else {
+		sprintf(imp_sth->dyn_id, "DBD_%x", (int)tt++);
+	    }
+
 	    if (DBIS->debug >= 2)
 		PerlIO_printf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
 			imp_sth->dyn_id);
@@ -2106,22 +2119,22 @@ static int syb_st_describe_proc(imp_sth, statement)
     imp_sth_t *imp_sth;
     char *statement;
 { 
-    char *buff = strdup(statement);
+    char *buff = my_strdup(statement);
     char *tok;
 
     tok = strtok(buff, " \n\t");
     if(strncasecmp(tok, "exec", 4)) {
-	free(buff);
+	safefree(buff);
 	return 0;		/* it's gotta start with exec(ute) */
     }
     tok = strtok(NULL, " \n\t"); /* this is the proc name */
     if(!tok || !*tok) {
 	warn("DBD::Sybase: describe_proc: didn't get a proc name in EXEC statement\n");
-	free(buff);
+	safefree(buff);
 	return 0;
     }
     strcpy(imp_sth->proc, tok);
-    free(buff);
+    safefree(buff);
     return 1;
 }
 
@@ -3956,5 +3969,14 @@ static int map_syb_types(syb_type)
     default:
 	return SQL_CHAR;
     }
+}
+
+static char *my_strdup(string)
+    char *string;
+{
+    char *buff = safemalloc(strlen(string) + 1);
+    strcpy(buff, string);
+
+    return buff;
 }
 

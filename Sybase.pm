@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.46 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: Sybase.pm,v 1.47 2003/12/24 19:15:35 mpeppler Exp $
 
 # Copyright (c) 1996-2003   Michael Peppler
 #
@@ -24,8 +24,8 @@
 
 
     $hostname = Sys::Hostname::hostname();
-    $VERSION = '1.01';
-    my $Revision = substr(q$Revision: 1.46 $, 10);
+    $VERSION = '1.02';
+    my $Revision = substr(q$Revision: 1.47 $, 10);
 
     require_version DBI 1.02;
 
@@ -84,6 +84,24 @@
 	    });
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) or return undef;
+
+	# OK - let us see what sort of server we're connected to. We
+	# need this because some of the SQL commands that we need to send
+	# to the server depend on this information.
+	my $sth = $this->prepare("select \@\@version");
+	if($sth->execute) {
+	    my $row = $sth->fetch;
+	    if($row && ref($row)) {
+		if($row->[0] =~ /microsoft/i) {
+		    $this->{syb_server_version} = -1;
+		    #warn "Connected to MS-SQL\n";
+		} elsif($row->[0] =~ /adaptive server enterprise\/([\d\.]+)/i ||
+		       $row->[0] =~ /sql server\/([\d\.]+)/i) {
+		    $this->{syb_server_version} = $1;
+		    #warn "Connected to Sybase\n";
+		}
+	    }
+	}
 
 	$this;
     }
@@ -383,6 +401,11 @@
 	
     DEADLOCK: 
         {	
+	    # Initialize $err before each iteration through this loop.
+	    # Otherwise, we inherit the value from the previous failure.
+
+	    $err = undef;
+
 	    # Use RaiseError technique to throw a fatal error if anything goes
 	    # wrong in the execute or fetch phase.
 	    eval { 

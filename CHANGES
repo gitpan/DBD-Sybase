@@ -1,4 +1,17 @@
-$Id: CHANGES,v 1.44 2003/09/08 21:32:31 mpeppler Exp $
+$Id: CHANGES,v 1.45 2003/12/24 19:15:35 mpeppler Exp $
+
+Release 1.02
+
+	Added syb_server_version attribute. This is filled in at connect()
+        time with the numeric version number (11.0.3.3, 12.5.1, etc) of the
+        server that you are connected to.
+
+	Bugs Fixed:
+
+	520 - t/exec.t fails on Win32.
+	533 - logic error in deadlock retry in nsql().
+	532 - t/xblob.t test provides false positive for win32.
+	534 - Placeholder prepare() fails with ASE 11.0.x
 
 Release 1.01
 

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.8 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: main.t,v 1.9 2003/12/24 19:15:35 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -29,6 +29,8 @@ my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {Print
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;
+
+print "Connect to server version: ", $dbh->{syb_server_version}, "\n";
 
 my $rc;
 
