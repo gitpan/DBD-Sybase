@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.13 1999/05/16 18:29:55 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.14 1999/05/17 05:56:07 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -57,7 +57,12 @@ CS_CLIENTMSG	*errmsg;
     if((ct_con_props(connection, CS_GET, CS_USERDATA,
 		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
 	croak("Panic: clientmsg_cb: Can't find handle from connection");
-    
+
+    /* if LongTruncOK is set then ignore this error. */
+    if(DBIc_is(imp_dbh, DBIcf_LongTruncOk) &&
+	CS_NUMBER(errmsg->msgnumber) == 132)
+       return CS_SUCCEED;
+
     sv_setiv(DBIc_ERR(imp_dbh), (IV)CS_NUMBER(errmsg->msgnumber));
     
     if(SvOK(DBIc_ERRSTR(imp_dbh))) 
@@ -118,6 +123,48 @@ CS_SERVERMSG	*srvmsg;
     if((ct_con_props(connection, CS_GET, CS_USERDATA,
 		     &imp_dbh, CS_SIZEOF(imp_dbh), NULL)) != CS_SUCCEED)
 	croak("Panic: servermsg_cb: Can't find handle from connection");
+
+    if(imp_dbh->err_handler) {
+	dSP;
+	SV *sv, **svp;
+	HV *hv;
+	int retval, count;
+
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(sp);
+	    
+	
+	XPUSHs(sv_2mortal(newSViv(srvmsg->msgnumber)));
+	XPUSHs(sv_2mortal(newSViv(srvmsg->severity)));
+	XPUSHs(sv_2mortal(newSViv(srvmsg->state)));
+	XPUSHs(sv_2mortal(newSViv(srvmsg->line)));
+	if(srvmsg->svrnlen > 0)
+	    XPUSHs(sv_2mortal(newSVpv(srvmsg->svrname, 0)));
+	else
+	    XPUSHs(&PL_sv_undef);
+	if(srvmsg->proclen > 0)
+	    XPUSHs(sv_2mortal(newSVpv(srvmsg->proc, 0)));
+	else
+	    XPUSHs(&PL_sv_undef);
+	XPUSHs(sv_2mortal(newSVpv(srvmsg->text, 0)));
+
+	
+	PUTBACK;
+	if((count = perl_call_sv(imp_dbh->err_handler, G_SCALAR)) != 1)
+	    croak("An error handler can't return a LIST.");
+	SPAGAIN;
+	retval = POPi;
+	
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+
+	/* If the called sub returns 0 then ignore this error */
+	if(retval == 0)
+	    return CS_SUCCEED;
+    }
+
     
     if(imp_dbh && srvmsg->msgnumber) {
 	sv_setiv(DBIc_ERR(imp_dbh), (IV)srvmsg->msgnumber);
@@ -430,23 +477,23 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	extractFromDsn("timeout=", dsn, imp_dbh->timeout, 64);
 	extractFromDsn("scriptName=", dsn, imp_dbh->scriptName, 255);
 	extractFromDsn("hostname=", dsn, imp_dbh->hostname, 255);
+	extractFromDsn("tdsLevel=", dsn, imp_dbh->tdsLevel, 30);
     } else {
 	strcpy(imp_dbh->server, dsn);
     }
 
     strcpy(imp_dbh->uid, uid);
-    strcpy(imp_dbh->pwd, pwd);
+    strcpy(imp_dbh->pwd, pwd);    
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
     if((imp_dbh->connection = syb_db_connect(imp_dbh)) == NULL)
 	return 0;
 
-    /* AutoCommit is ON by default */
-    DBIc_set(imp_dbh,DBIcf_AutoCommit, 1);
-
     DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
     DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
+
+    DBIc_LongReadLen(imp_dbh) = 32768;
 
     DBH = imp_dbh;
 
@@ -460,7 +507,6 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     dTHR;
     CS_RETCODE     retcode;
     CS_CONNECTION *connection = NULL;
-/*    CS_COMMAND    *cmd; */
     CS_LOCALE     *locale = NULL;
     char ofile[255];
     int len;
@@ -562,6 +608,29 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     {
 	warn("ct_con_props(CS_USERDATA) failed");
 	return 0;
+    }
+    if(imp_dbh->tdsLevel[0] != 0) {
+	CS_INT value = 0;
+	if(strEQ(imp_dbh->tdsLevel, "CS_TDS_40")) 
+	    value = CS_TDS_40;
+	else if(strEQ(imp_dbh->tdsLevel, "CS_TDS_42"))
+	    value = CS_TDS_42;
+	else if(strEQ(imp_dbh->tdsLevel, "CS_TDS_46"))
+	    value = CS_TDS_46;
+	else if(strEQ(imp_dbh->tdsLevel, "CS_TDS_495"))
+	    value = CS_TDS_495;
+	else if(strEQ(imp_dbh->tdsLevel, "CS_TDS_50"))
+	    value = CS_TDS_50;
+
+	if(value) {
+	    if (ct_con_props( connection, CS_SET, CS_TDS_VERSION, (CS_VOID*)&value,
+			      CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) {
+		warn("ct_con_props(CS_TDS_VERSION, %s) failed",
+		     imp_dbh->tdsLevel);
+	    }
+	} else {
+	    warn("Unkown tdsLevel value %s found", imp_dbh->tdsLevel);
+	}
     }
 
     if (imp_dbh->packetSize[0] != 0) {
@@ -707,15 +776,13 @@ int      syb_db_commit(dbh, imp_dbh)
     CS_RETCODE  retcode;
     int         failFlag = 0;
 
-    if(!imp_dbh->inTransaction)
-	return 1;
     if(DBIc_is(imp_dbh, DBIcf_AutoCommit)) {
 	warn("commit ineffective with AutoCommit");
 	return 1;
     }
 
     cmd = syb_alloc_cmd(imp_dbh->connection);
-    sprintf(buff, "\nCOMMIT TRAN %s\n", imp_dbh->tranName);
+    strcpy(buff, "\nCOMMIT TRAN\n");
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_commit() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -753,15 +820,13 @@ int      syb_db_rollback(dbh, imp_dbh)
     CS_RETCODE  retcode;
     int         failFlag = 0;
 
-    if(!imp_dbh->inTransaction)
-	return 1;
     if(DBIc_is(imp_dbh, DBIcf_AutoCommit)) {
 	warn("rollback ineffective with AutoCommit");
 	return 1;
     }
 
     cmd = syb_alloc_cmd(imp_dbh->connection);
-    sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
+    strcpy(buff, "\nROLLBACK TRAN\n");
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_rollback() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -789,52 +854,6 @@ int      syb_db_rollback(dbh, imp_dbh)
     return !failFlag;
 }
 
-static int syb_db_opentran(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
-{
-    CS_COMMAND *cmd;
-    char buff[128];
-    CS_INT      restype;
-    CS_RETCODE  retcode;
-    int         failFlag = 0;
-
-    if(DBIc_is(imp_dbh, DBIcf_AutoCommit) || imp_dbh->inTransaction)
-	return 1;
-
-    cmd = syb_alloc_cmd(imp_dbh->connection);
-    sprintf(imp_dbh->tranName, "DBI%x", imp_dbh);
-    sprintf(buff, "\nBEGIN TRAN %s\n", imp_dbh->tranName);
-    retcode = ct_command(cmd, CS_LANG_CMD, buff,
-			 CS_NULLTERM, CS_UNUSED);
-    if(dbis->debug >= 2)
-	fprintf(DBILOGFP, "    syb_db_opentran() -> ct_command(%s) = %d\n", 
-		buff, retcode);
-    if(retcode != CS_SUCCEED) 
-	return 0;
-    retcode = ct_send(cmd);
-    if(dbis->debug >= 2)
-	fprintf(DBILOGFP, "    syb_db_opentran() -> ct_send() = %d\n",
-		retcode);
-
-    if(retcode != CS_SUCCEED)
-	return 0;
-
-    while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
-	if(dbis->debug >= 2)
-	    fprintf(DBILOGFP, "    syb_db_opentran() -> ct_results(%d) == %d\n",
-		    restype, retcode);
-
-	if(restype == CS_CMD_FAIL)
-	    failFlag = 1;
-    }
-
-    ct_cmd_drop(cmd);
-    if(!failFlag)
-	imp_dbh->inTransaction = 1;
-    return !failFlag;
-}
-
 
 int      syb_db_disconnect(dbh, imp_dbh)
     SV *dbh;
@@ -846,7 +865,7 @@ int      syb_db_disconnect(dbh, imp_dbh)
     /* rollback if we get disconnected and no explicit commit
        has been called (when in non-AutoCommit mode) */
     if(imp_dbh->isDead == 0) { /* only call if connection still active */
-	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->inTransaction)
+	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
 	    syb_db_rollback(dbh, imp_dbh);
 
 	if(dbis->debug >= 2)
@@ -889,15 +908,49 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     char *key = SvPV(keysv,kl);
 
     if (kl == 10 && strEQ(key, "AutoCommit")) {
+	CS_BOOL    value;
+	CS_RETCODE ret;
+
 	on = SvTRUE(valuesv);
 	if(on) {
 	    /* Going from OFF to ON - so force a COMMIT on any open 
 	       transaction */
 	    syb_db_commit(dbh, imp_dbh);
+	    value = CS_FALSE;
+	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+		       &value, CS_UNUSED, NULL);
+	} else {
+	    value = CS_TRUE;
+	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+		       &value, CS_UNUSED, NULL);
 	}
+	if(ret != CS_SUCCEED) {
+	    warn("Setting of CS_OPT_CHAINXACTS failed.");
+	    return FALSE;
+	}
+
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, SvTRUE(valuesv));
 	return TRUE;
     }
+    if(kl == 11 && strEQ(key, "LongTruncOK")) {
+	DBIc_set(imp_dbh, DBIcf_LongTruncOk, SvTRUE(valuesv));
+	return TRUE;
+    }
+
+    if(kl == 11 && strEQ(key, "LongReadLen")) {
+	CS_INT value = SvIV(valuesv);
+	CS_RETCODE ret;
+	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_TEXTSIZE, 
+			 &value, CS_UNUSED, NULL);
+	if(ret != CS_SUCCEED) {
+	    warn("Setting of CS_OPT_TEXTSIZE failed.");
+	    return FALSE;
+	}
+	DBIc_LongReadLen(imp_dbh) = value;
+	
+	return TRUE;
+    }
+
     if (kl == 12 && strEQ(key, "syb_show_sql")) {
 	on = SvTRUE(valuesv);
 	if(on) {
@@ -913,6 +966,16 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    imp_dbh->showEed = 1;
 	} else {
 	    imp_dbh->showEed = 0;
+	}
+	return TRUE;
+    }
+    if (kl == 15 && strEQ(key, "syb_err_handler")) {
+	if(valuesv == &PL_sv_undef) {
+	    imp_dbh->err_handler = NULL;
+	} else if(imp_dbh->err_handler == (SV*)NULL) {
+	    imp_dbh->err_handler = newSVsv(valuesv);
+	} else {
+	    sv_setsv(imp_dbh->err_handler, valuesv);
 	}
 	return TRUE;
     }
@@ -936,6 +999,15 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	else
 	    retsv = newSViv(0);
     }
+    if(kl == 11 && strEQ(key, "LongTruncOK")) {
+	if(DBIc_is(imp_dbh, DBIcf_LongTruncOk))
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
+    if (kl == 11 && strEQ(key, "LongReadLen")) {
+	retsv = newSViv(DBIc_LongReadLen(imp_dbh));
+    }
     if (kl == 12 && strEQ(key, "syb_show_sql")) {
 	if(imp_dbh->showSql) 
 	    retsv = newSViv(1);
@@ -953,6 +1025,13 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = newSViv(1);
 	else
 	    retsv = newSViv(0);
+    }
+    if (kl == 15 && strEQ(key, "syb_err_handler")) {
+	if(imp_dbh->err_handler) {
+	    retsv = newSVsv(imp_dbh->err_handler);
+	} else {
+	    retsv = &PL_sv_undef;
+	}
     }
     return retsv;
 }
@@ -1057,10 +1136,6 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    return 0;
 	}
     }
-
-    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
-	if(syb_db_opentran(NULL, imp_dbh) == 0)
-	    return 0;
 
     imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? imp_sth->connection :
 				 imp_dbh->connection);
@@ -1479,8 +1554,10 @@ syb_st_fetch(sth, imp_sth)
 
     switch(retcode)
     {
-      case CS_ROW_FAIL:		/* not sure how I should handle this one! */
-	goto TryAgain;
+      case CS_ROW_FAIL:
+	  /* if LongTruncOK is off, then discard this row */
+        if(!DBIc_is(imp_sth, DBIcf_LongTruncOk)) 
+	    goto TryAgain;
       case CS_SUCCEED:
 	for(i = 0; i < num_fields; ++i)
 	{

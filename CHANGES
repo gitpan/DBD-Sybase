@@ -1,4 +1,15 @@
-$Id: CHANGES,v 1.12 1999/05/16 18:26:24 mpeppler Exp $
+$Id: CHANGES,v 1.13 1999/05/17 05:56:46 mpeppler Exp $
+
+Release 0.15
+
+	Added an error handler callback which can intercept error messages
+	and provide ad-hoc handling of error situations.
+	In AutoCommit == 0 mode, use CS_OPT_CHAINXACTS mode on the 
+	server instead of issuing explicit transactions.
+	$dbh->LongReadLen and LongTruncOK now work.
+	First cut at the type_info() and type_info_all() methods.
+	perl Makefile.PL now attempts to discover the libraries directly
+	based on what it finds in $SYBASE/lib.
 
 Release 0.14
 

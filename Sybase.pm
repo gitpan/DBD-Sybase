@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.14 1999/05/16 18:26:38 mpeppler Exp $
+# $Id: Sybase.pm,v 1.15 1999/05/17 05:55:46 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.14';
-    my $Revision = substr(q$Revision: 1.14 $, 10);
+    $VERSION = '0.15';
+    my $Revision = substr(q$Revision: 1.15 $, 10);
 
     require_version DBI 1.02;
 
@@ -52,7 +52,7 @@
 
 {   package DBD::Sybase::dr; # ====== DRIVER ======
     use strict;
-    
+
     sub connect { 
         my($drh, $dbase, $user, $auth, $attr)= @_;
 	my $ifile = '';
@@ -67,10 +67,6 @@
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth) or return undef;
 
-#	if($server =~ /database=(\w+)/) {
-#	    $this->do("use $1");
-#	}
-
 	$this;
     }
 }
@@ -79,6 +75,8 @@
 {   package DBD::Sybase::db; # ====== DATABASE ======
     use strict;
 
+    use DBI qw(:sql_types);
+    
     sub prepare {
 	my($dbh, $statement, @attribs)= @_;
 
@@ -133,16 +131,17 @@
     sub table_info {
 	my $dbh = shift;
 
-	my $sth = $dbh->prepare("
-           select TABLE_QUALIFIER = NULL
-                , TABLE_OWNER     = u.name
-                , TABLE_NAME      = o.name
-                , TABLE_TYPE      = o.type  -- XXX
-                , REMARKS         = NULL
-             from sysobjects o
-                , sysusers   u
-            where o.type in ('U', 'V', 'S')
-              and o.uid = u.uid");
+	my $sth = $dbh->prepare("sp_tables");
+# Another possibility would be:
+#           select TABLE_QUALIFIER = NULL
+#                , TABLE_OWNER     = u.name
+#                , TABLE_NAME      = o.name
+#                , TABLE_TYPE      = o.type  -- XXX
+#                , REMARKS         = NULL
+#             from sysobjects o
+#                , sysusers   u
+#            where o.type in ('U', 'V', 'S')
+#              and o.uid = u.uid
 
 	$sth->execute;
 	$sth;
@@ -157,6 +156,84 @@
 	}
 	$sth->finish;
 	return 1;
+    }
+
+    sub type_info_all {
+	my ($dbh) = @_;
+
+	my $ti = 
+	[
+     {   TYPE_NAME         => 0,
+	 DATA_TYPE         => 1,
+	 PRECISION         => 2,
+	 LITERAL_PREFIX    => 3,
+	 LITERAL_SUFFIX    => 4,
+	 CREATE_PARAMS     => 5,
+	 NULLABLE          => 6,
+	 CASE_SENSITIVE    => 7,
+	 SEARCHABLE        => 8,
+	 UNSIGNED_ATTRIBUTE=> 9,
+	 MONEY             => 10,
+	 AUTO_INCREMENT    => 11,
+	 LOCAL_TYPE_NAME   => 12,
+	 MINIMUM_SCALE     => 13,
+	 MAXIMUM_SCALE     => 14,
+     },
+	 [ 'tinyint', SQL_TINYINT,
+	   undef, "", "", undef, 1, 0, 2, 1, 0, 0, undef, undef, undef
+	 ],
+	 [ 'smallint', SQL_SMALLINT,
+	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
+	 ],
+	 [ 'int', SQL_INTEGER,
+	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
+	 ],
+	 [ 'integer', SQL_INTEGER,
+	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
+	 ],
+	 [ 'numeric', SQL_NUMERIC,
+	   38, "", "", "precision,scale", 1, 0, 2, 0, 0, 0, undef, 0, 38
+	 ],
+	 [ 'decimal', SQL_DECIMAL,
+	   38, "", "", "precision,scale", 1, 0, 2, 0, 0, 0, undef, 0, 38
+	 ],
+	 [ 'float', SQL_FLOAT,
+	   8, "", "", "precision", 1, 0, 2, 0, 0, 0, undef, 4, 8
+	 ],
+	 [ 'double', SQL_DOUBLE,
+	   8, "", "", undef, 1, 0, 2, 0, 0, 0, undef, 8, 8
+	 ],
+	 [ 'real', SQL_REAL,
+	   4, "", "", undef, 1, 0, 2, 0, 0, 0, undef, 4, 4
+	 ],
+	 [ 'smallmoney', SQL_NUMERIC,
+	   4, "", "", undef, 1, 0, 2, 0, 1, 0, undef, 4, 4
+	 ],
+	 [ 'money', SQL_NUMERIC,
+	   8, "", "", undef, 1, 0, 2, 0, 1, 0, undef, 8, 8
+	 ],
+	 [ 'char', SQL_CHAR,
+	   255, "'", "'", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
+	 ],
+	 [ 'varchar', SQL_VARCHAR,
+	   255, "'", "'", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
+	 ],
+	 [ 'binary', SQL_BINARY,
+	   255, "", "", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
+	 ],
+	 [ 'varbinary', SQL_VARBINARY,
+	   255, "", "", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
+	 ],
+	 [ 'text', SQL_LONGVARCHAR,
+	   2147483647, "'", "'", undef, 1, 1, 3, 0, 0, 0, undef, undef, undef
+	 ],
+	 [ 'image', SQL_LONGVARBINARY,
+	   2147483647, "", "", undef, 1, 1, 3, 0, 0, 0, undef, undef, undef
+	 ],
+	];
+
+
+	return $ti;
     }
 }
 
@@ -292,6 +369,8 @@ server it is sometimes necessary to increase this value:
 
      $dbh = DBI->connect("dbi:Sybase:loginTimeout=240", # wait up to 4 minutes
 			 $user, $passwd);
+
+
 =item timeout
 
 Specify the number of seconds after which any Open Client calls will timeout
@@ -317,6 +396,23 @@ Specify the hostname that will be displayed by sp_who (and will be stored
 in the hostname column of sysprocesses)..
 
     $dbh->DBI->connect("dbi:Sybase:hostname=kiruna", $user, $password);
+
+=item tdsLevel
+
+Specify the TDS protocol level to use when connecting to the server.
+Valid values are CS_TDS_40, CS_TDS_42, CS_TDS_46, CS_TDS_495 and CS_TDS_50.
+In general this is automatically negotiated between the client and the 
+server, but in certain cases this may need to be forced to a lower level
+by the client. 
+
+I have heard rumors that setting this to CS_TDS_42 enables DBD::Sybase
+to connect to an MS-SQL 7.0 server, although I can't confirm that
+firsthand.
+
+    $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
+
+B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
+features, ?-style placeholders and non-AutoCommit mode, in particular.
 
 =back
 
@@ -402,6 +498,45 @@ $dbh->errstr.
 If set, then extended error information is included in the string returned 
 by $dbh->errstr. Extended error information include the index causing a
 duplicate insert to fail, for example.
+
+=item syb_err_handler
+
+B<NEW> Note that the syntax for the error handler is experimental and
+may change in future versions.
+
+This attribute is used to set an ad-hoc error handler callback (ie a perl 
+subroutine) that gets called before the normal error handler does it's job.
+If this subroutine returns 0 then the error is ignored. This is useful
+for handling PRINT statements in Transact-SQL, for handling messages
+from the Backup Server, showplan output, dbcc output, etc.
+
+The subroutine is called with 7 parameters: the Sybase error number,
+the severity, the state, the line number in the SQL batch, the server name 
+(if available), the stored procedure name (if available), and the message
+text.
+
+Example:
+
+    %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6225);
+    sub err_handler {
+        my($err, $sev, $state, $line, $server, $proc, $msg) = @_;
+
+        if($showplan_msgs{$err}) { # it's a showplan message
+            print SHOWPLAN "$err - $msg\n";
+            return 0;    # This is not an error
+        }
+
+        return 1;
+    }
+
+    $dbh = DBI->connect('dbi:Sybase:server=troll', 'sa', '');
+    $dbh->{syb_err_handler} = \&err_handler;
+    $dbh->do("set showplan on");
+    open(SHOWPLAN, ">>/var/tmp/showplan.log") || die "Can't open showplan log: $!";
+    $dbh->do("exec someproc");    # get the showplan trace for this proc.
+    $dbh->disconnect;
+
+
 
 =back
 
@@ -571,9 +706,6 @@ at http://sybooks.sybase.com/dynaweb.
 
 
 =head1 BUGS
-
-Setting $dbh->{LongReadLen} has no effect. Use $dbh->do("set textsize xxxx")
-instead.
 
 You can run out of space in the tempdb database if you use a lot of
 calls with bind variables (ie ? style placeholders) without closing the

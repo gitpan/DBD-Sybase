@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.8 1999/05/16 18:26:56 mpeppler Exp $
+# $Id: Makefile.PL,v 1.9 1999/05/17 05:46:11 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -11,10 +11,14 @@ use strict;
 use DBI;
 use DBI::DBD;
 use Config;
+use Getopt::Long;
 
 use vars qw($SYBASE $inc_string $lib_string $LINKTYPE);
 
 $LINKTYPE = 'dynamic';
+
+my $file;
+GetOptions('--file' => \$file);
 
 configure();
 
@@ -51,6 +55,13 @@ sub MY::postamble {
 sub configure {
     my %attr;
     my ($key, $val);
+
+    my $sybase_dir = $ENV{SYBASE};
+
+    if(!$sybase_dir) {
+	$sybase_dir = (getpwname('sybase'))[7];
+    }
+
     open(IN, "CONFIG") || die "Can't open CONFIG: $!";
     while(<IN>) {
 	chomp;
@@ -66,11 +77,24 @@ sub configure {
     if($attr{SYBASE} && -d $attr{SYBASE}) {
 	$SYBASE = $attr{SYBASE}; 
     } else {
-	$SYBASE = $ENV{SYBASE};
+	$SYBASE = $sybase_dir;
     }
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
     }
+
+    if(! -d "$SYBASE/lib" || !-d "$SYBASE/include") {
+	die "Can't find the lib or include directories under $SYBASE!";
+    }
+
+    my $test_file = "$SYBASE/lib/libct.$Config{so}";
+    if($^O eq 'MSWin32') {
+	$test_file = "$SYBASE/lib/libct.lib"; 
+    } elsif($^O eq 'VMS') {
+	$test_file = "$SYBASE/lib/libct.olb"; 
+    }
+	
+    die "Can't find any Sybase libraries in $SYBASE/lib" if(!-e $test_file);
 
 
     $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
@@ -80,7 +104,12 @@ sub configure {
     } elsif($^O eq 'VMS') {
 	$lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb $attr{EXTRA_LIBS}";
     } else {
-	$lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
+	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS});
+	if($file) {
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $attr{EXTRA_LIBS} -lm";
+	} else {
+	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl $extra -lm";
+	}
     }
     
     my $config_sitearch = $Config{sitearchexp};
@@ -106,5 +135,28 @@ sub configure {
     }
 }
 
+sub getExtraLibs {
+    my $dir = shift;
+    my $cfg = shift;
+
+    my $lib = "$dir/lib";
+
+    my %x = map {$_ => 1} split(' ', $cfg);
+    foreach my $f (keys(%x)) {
+	my $file = $f;
+	$file =~ s/-l//;
+	next if($file =~ /^-/);
+	if(!-e "$lib/lib$file.$Config{so}") {
+	    delete($x{$f});
+	}
+    }
+    
+
+    foreach my $f (qw(insck tli sdna dnet_stub)) {
+	$x{"-l$f"} = 1 if(-e "$lib/lib$f.$Config{so}");
+    }
+
+    join(' ', keys(%x));
+}
     
 	

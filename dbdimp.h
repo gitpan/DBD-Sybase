@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.6 1999/05/16 18:30:22 mpeppler Exp $
+   $Id: dbdimp.h,v 1.7 1999/05/17 05:56:38 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -60,14 +60,16 @@ struct imp_dbh_st {
     char      packetSize[64];
     char      language[64];
     char      ifile[255];
-/*      char      ofile[255]; */
     char      loginTimeout[64];
     char      timeout[64];
     char      scriptName[255];
     char      hostname[255];
     char      database[36];
+    char      tdsLevel[30];
 
     int       isDead;
+
+    SV	      *err_handler;
 
     int       showEed;
     int       showSql;

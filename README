@@ -1,4 +1,4 @@
-$Id: README,v 1.7 1999/05/16 18:34:05 mpeppler Exp $
+$Id: README,v 1.8 1999/05/17 05:57:21 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -32,6 +32,17 @@ man page for details.
 
 Recent changes:
 
+Release 0.15
+
+	Added an error handler callback which can intercept error messages
+	and provide ad-hoc handling of error situations.
+	In AutoCommit == 0 mode, use CS_OPT_CHAINXACTS mode on the 
+	server instead of issuing explicit transactions.
+	$dbh->LongReadLen and LongTruncOK now work.
+	First cut at the type_info() and type_info_all() methods.
+	perl Makefile.PL now attempts to discover the libraries directly
+	based on what it finds in $SYBASE/lib.
+
 Release 0.14
 
 	Added a 'timeout' connection attribute (contributed by Tom May) 
@@ -41,36 +52,29 @@ Release 0.14
         Make sure $dbh->do() returns immediately when an error is encountered.
 	Include dbd-sybase.pod (Tim Bunce's Driver Summary for DBD::Sybase).
 
-Release 0.13
-
-	Bug fix release - binding undef (NULL) variables when using
-	? style placeholders didn't work.
-	Incorrect login didn't get flagged properly (this bug was
-	introduced in 0.11.)
-	Added database attribute to the connect() call.
-
-Release 0.12
-
-	Bug fix release - recent versions of DBI make an array that
-	DBD::Sybase uses read-only, causing errors when multiple
-	result sets are retrieved where the second result set is wider 
-	(has more columns) than the first one.
-
-Release 0.11
-
-	Adds support for multiple $sth for a single $dbh (this is done 
-	by openeing a new connection in prepare() if the previously
-	prepared statement is still active.
-	Add support for date formatting via $dbh->func($fmt,
-	'_date_fmt').
-	Added two new connect attributes: scriptName and
-	hostname. Setting these can help identify processes in the
-	Sybase sysprocesses table.
 
 
 Building:
 
-Edit CONFIG to set system defaults:
+This version attempts to find out which libraries it needs by looking
+at $SYBASE/lib. This behaviour is experimental, and will only work
+on Unix systems (ie on Win32 and VMS you still have to edit the CONFIG
+file the old way), but appears to work fine on the two systems I have
+access to (Sybase 11.5/Solaris 7 & Sybase 11.0.3.3/linux). It assumes
+that $SYBASE is set and points to the Sybase installation directory that
+you want to use to build DBD::Sybase.
+
+Run perl Makefile.PL in the normal way, without editing CONFIG. If 
+there are no error messages (ie no missing libraries), run make & make test.
+
+If either of these fail you will probably need to use the CONFIG file.
+
+To force perl Makefile.PL to make use of the information in the CONFIG file
+you need to run it with the --file option:
+	perl Makefile.PL --file
+
+The CONFIG file can be used to set certain system variables that
+are needed for the build. 
 	SYBASE is the root directory of your Sybase installation. DBD::Sybase
 	will use $SYBASE/lib and $SYBASE/include during the build.
 
