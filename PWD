@@ -3,6 +3,6 @@
 # You probably don't want to have it lying around after you've made
 # sure that everything works OK.
 
-UID=sa
 PWD=
 SRV=
+UID=sa

@@ -25,4 +25,5 @@ t/screen.jpg
 eg/README
 eg/Show.cgi
 eg/dbschema.pl
+eg/check-space.pl
 

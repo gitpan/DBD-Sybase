@@ -1,15 +1,13 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.9 2001/07/03 15:51:28 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.10 2001/12/13 01:05:26 mpeppler Exp $
    Copyright (c) 1997-2001 Michael Peppler
 
    Uses from Driver.xst
    Copyright (c) 1994,1995,1996,1997  Tim Bunce
 
    You may distribute under the terms of either the GNU General Public
-   License or the Artistic License, as specified in the Perl README file,
-   with the exception that it cannot be placed on a CD-ROM or similar media
-   for commercial distribution without the prior approval of the author.
+   License or the Artistic License, as specified in the Perl README file.
 
 */
 

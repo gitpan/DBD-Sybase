@@ -1,12 +1,10 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.28 2001/08/03 20:05:59 mpeppler Exp $
+# $Id: Sybase.pm,v 1.32 2001/12/13 01:05:26 mpeppler Exp $
 
 # Copyright (c) 1996-2001   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
-#   License or the Artistic License, as specified in the Perl README file,
-#   with the exception that it cannot be placed on a CD-ROM or similar media
-#   for commercial distribution without the prior approval of the author.
+#   License or the Artistic License, as specified in the Perl README file.
 #
 # Based on DBD::Oracle Copyright (c) 1994,1995,1996,1997 Tim Bunce
 
@@ -22,8 +20,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.93';
-    my $Revision = substr(q$Revision: 1.28 $, 10);
+    $VERSION = '0.94';
+    my $Revision = substr(q$Revision: 1.32 $, 10);
 
     require_version DBI 1.02;
 
@@ -34,6 +32,17 @@
     $err = 0;		# The $DBI::err value
     $errstr = '';
     $sqlstate = "00000";
+
+ if(0) {
+    my %syb_api = (
+	'nsql' => ['db', { U =>[2,0,'$statement [, $type [, $callback ] ]'] } ],
+			);
+    foreach my $method (keys %syb_api){
+	DBI->_install_method("DBI::$syb_api{$method}->[0]::$method", 
+			     'Sybase.pm',
+			     $syb_api{$method}->[1]);
+    }
+}
 
     sub driver {
 	return $drh if $drh;
@@ -70,7 +79,7 @@
 	    'CURRENT_USER' => $user,
 	    });
 
-	DBD::Sybase::db::_login($this, $server, $user, $auth) or return undef;
+	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) or return undef;
 
 	$this;
     }
@@ -137,8 +146,12 @@
 
     sub table_info {
 	my $dbh = shift;
+	my $catalog = $dbh->quote(shift);
+	my $schema  = $dbh->quote(shift);
+	my $table   = $dbh->quote(shift);
+	my $type    = $dbh->quote(shift);
 
-	my $sth = $dbh->prepare("sp_tables");
+	my $sth = $dbh->prepare("sp_tables $table, $schema, $catalog, $type");
 # Another possibility would be:
 #           select TABLE_QUALIFIER = NULL
 #                , TABLE_OWNER     = u.name
@@ -156,11 +169,11 @@
 
     sub primary_key_info {
 	my $dbh = shift;
-	my $catalog = shift;
-	my $schema = shift;
-	my $table = shift;
+	my $catalog = $dbh->quote(shift);     # == database in Sybase terms
+	my $schema = $dbh->quote(shift);      # == owner in Sybase terms
+	my $table = $dbh->quote(shift);
 
-	my $sth = $dbh->prepare("sp_pkeys $table");
+	my $sth = $dbh->prepare("sp_pkeys $table, $schema, $catalog");
 
 	$sth->execute;
 	$sth;
@@ -722,7 +735,8 @@ from the Backup Server, showplan output, dbcc output, etc.
 The subroutine is called with 7 parameters: the Sybase error number,
 the severity, the state, the line number in the SQL batch, the server name 
 (if available), the stored procedure name (if available), and the message
-text.
+text. If C<syb_show_sql> is true, then an 8th parameter is uncluded: the 
+current SQL command buffer.
 
 For client-side errors the state and line number are always 0, and the 
 server name and procedure name are always undef.
@@ -832,6 +846,27 @@ For example:
 
 This is very useful information to have when reporting a problem.
 
+=item syb_failed_db_fatal (bool)
+
+If this is set, then a connect() request where the I<database>
+specified doesn't exist or is not accessible will fail. This needs
+to be set in the attribute hash passed during the DBI->connect() call
+to be effective.
+
+Default: off
+
+=item syb_no_child_con (bool)
+
+If this attribute is set then DBD::Sybase will B<not> allow multiple
+simultaneously active statement handles on one database handle (i.e.
+multiple $dbh->prepare() calls without completely processing the
+results from any existing statement handle). This can be used
+to debug situations where incorrect or unexpected results are
+found due to the creation of a sub-connection where the connection
+attributes (in particular the current database) are different.
+
+Default: off
+
 
 =back
 
@@ -920,6 +955,10 @@ Nov 15 1998 11:30AM
 =item DMY1_YYYY
 
 15/11/1998
+
+=item YMD3_YYYY
+
+19981115
 
 =item HMS
 

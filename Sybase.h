@@ -1,11 +1,9 @@
-/* $Id: Sybase.h,v 1.5 2001/08/03 20:05:59 mpeppler Exp $
+/* $Id: Sybase.h,v 1.7 2001/12/13 01:05:26 mpeppler Exp $
 
    Copyright (c) 1997 - 2001 Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
-   License or the Artistic License, as specified in the Perl README file,
-   with the exception that it cannot be placed on a CD-ROM or similar media
-   for commercial distribution without the prior approval of the author.
+   License or the Artistic License, as specified in the Perl README file.
 
 */
 
@@ -20,7 +18,7 @@
 /* These defines avoid name clashes for multiple statically linked DBD's    */
  
 #define dbd_init        syb_init
-#define dbd_db_login        syb_db_login
+#define dbd_db_login6       syb_db_login
 #define dbd_db_do       syb_db_do
 #define dbd_db_commit       syb_db_commit
 #define dbd_db_rollback     syb_db_rollback
@@ -79,7 +77,7 @@ void     syb_init _((dbistate_t *dbistate));
 
 int      syb_discon_all _((SV *drh, imp_drh_t *imp_drh));
 
-int      syb_db_login _((SV *dbh, imp_dbh_t *imp_dbh, char *dbname, char *uid, char *pwd));
+int      syb_db_login _((SV *dbh, imp_dbh_t *imp_dbh, char *dbname, char *uid, char *pwd, SV *attribs));
 int      syb_db_do _((SV *sv, char *statement));
 int      syb_db_commit     _((SV *dbh, imp_dbh_t *imp_dbh));
 int      syb_db_rollback   _((SV *dbh, imp_dbh_t *imp_dbh));

@@ -1,4 +1,20 @@
-$Id: CHANGES,v 1.26 2001/08/03 20:05:58 mpeppler Exp $
+$Id: CHANGES,v 1.30 2001/12/13 01:05:25 mpeppler Exp $
+
+Release 0.94
+
+        Added optional SQL buffer argument to syb_err_handler.
+	Interactive setting of user/server/pwd entries in PWD
+	for "make test".
+	Add syb_failed_db_fatal and syb_no_child_con attributes.
+
+	Bugs Fixed:
+
+	408 - Add the YYYYMMDD format to _date_fmt().
+	414 - Binding '' is interpreted as NULL.
+	415 - Fix buffer overlow in syb_db_login().
+	418 - Fix incorrect handing of CS_CANCELED return code in 
+              st_next_result().
+        421 - ActiveState patches.
 
 Release 0.93
 

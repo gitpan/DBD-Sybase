@@ -1,12 +1,10 @@
 /*
-   $Id: dbdimp.h,v 1.14 2001/07/03 15:52:01 mpeppler Exp $
+   $Id: dbdimp.h,v 1.16 2001/12/13 01:05:26 mpeppler Exp $
 
    Copyright (c) 1997-2001  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
-   License or the Artistic License, as specified in the Perl README file,
-   with the exception that it cannot be placed on a CD-ROM or similar media
-   for commercial distribution without the prior approval of the author.
+   License or the Artistic License, as specified in the Perl README file.
 
    Based on DBD::Oracle dbdimp.h, Copyright (c) 1994,1995 Tim Bunce
 
@@ -92,6 +90,10 @@ struct imp_dbh_st {
     int       deadlockRetry;
     int       deadlockSleep;
     int       deadlockVerbose;
+
+    int       noChildCon;	/* Don't create child connections for
+				   simultaneous statement handles */
+    int       failedDbUseFatal;
 
     char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
 					   used for error reporting */
