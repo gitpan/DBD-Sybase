@@ -1,6 +1,10 @@
-$Id: CHANGES,v 1.64 2004/11/19 10:39:40 mpeppler Exp $
+$Id: CHANGES,v 1.66 2004/12/01 07:20:55 mpeppler Exp $
 
 Release 1.05
+
+        BEHAVIOR CHANGE - $dbh->{LongReadLen} must now be called
+	before $dbh->prepare(). Previously you could call this after
+	the $dbh->prepare() but before the $sth->execute().
 
         Install private statement handle methods for TEXT/IMAGE handling
         to avoid $h->func() calls, and update documentation.
@@ -13,11 +17,15 @@ Release 1.05
 	Fix $sth->finish() behavior when syb_flush_finish is turned on.
 	Changed do { } while($sth->{syb_more_results}); idiom to use
 	redo instead.
+	Better/more consistent handling of multiple sth on a single dbh,
+        and new test file.
 
 	Bugs Fixed:
 
 	575 - Fails three tests under Tru-64.
 	577 - perl Makefile.PL fails if umask is 0.
+        578 - Better warning for calling $dbh->{LongReadLen} if $dbh is busy.
+        572 - Minor documentation update for bind_param().
 
 Release 1.04
 

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.79 2004/11/25 13:34:58 mpeppler Exp $
+# $Id: Sybase.pm,v 1.82 2004/12/01 07:20:55 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04_14';
-    my $Revision = substr(q$Revision: 1.79 $, 10);
+    $VERSION = '1.04_15';
+    my $Revision = substr(q$Revision: 1.82 $, 10);
 
     require_version DBI 1.30;
 
@@ -1085,6 +1085,9 @@ If set, then identifiers that would normally clash with Sybase reserved
 words can be quoted using C<"identifier">. In this case strings must
 be quoted with the single quote.
 
+This attribute can only be set if the database handle is idle (no
+active statement handle.)
+
 Default is for this attribute to be B<off>.
 
 =item syb_rowcount (int)
@@ -1092,6 +1095,8 @@ Default is for this attribute to be B<off>.
 Setting this attribute to non-0 will limit the number of rows returned by
 a I<SELECT>, or affected by an I<UPDATE> or I<DELETE> statement to the
 I<rowcount> value. Setting it back to 0 clears the limit.
+
+This attribute can only be set if the database handle is idle.
 
 Default is for this attribute to be B<0>.
 
@@ -1233,8 +1238,10 @@ fetched, otherwis  you can call this in a loop to fetch chunks of data:
 The fetched data is still subject to Sybase's TEXTSIZE option (see the
 SET command in the Sybase reference manual). This can be manipulated with
 DBI's B<LongReadLen> attribute, but C<$dbh->{LongReadLen}> I<must> be 
-set before $sth->execute() is called to take effect (note that LongReadLen
-has no effect  when using DBD::Sybase with an MS-SQL server).
+set before $dbh->prepare() is called to take effect (this is a change
+in 1.05 - previously you could call it after the prepare() but 
+before the execute()). Note that LongReadLen
+has no effect when using DBD::Sybase with an MS-SQL server.
 
 B<Note>: The IMAGE or TEXT column that is to be fetched this way I<must> 
 be I<last> in the select list.
@@ -1781,6 +1788,9 @@ use the explicit call once for each parameter:
     ....
     $sth->execute('two', 3.456);
     etc...
+
+Note that once a type has been defined for a parameter you can't change
+it.
 
 When binding SQL_NUMERIC or SQL_DECIMAL data you may get fatal conversion
 errors if the scale or the precision exceeds the size of the target

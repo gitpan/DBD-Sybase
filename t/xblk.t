@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: xblk.t,v 1.5 2004/08/04 08:51:37 mpeppler Exp $
+# $Id: xblk.t,v 1.7 2004/11/26 10:37:21 mpeppler Exp $
 #
 #
 # Small BLK test script for DBD::Sybase
@@ -89,10 +89,10 @@ sub test1 {
   ok($rc, 'Commit test 1');
   my $rows = $sth->rows();
   ok($rows == 3, 'Rows test 1');
-  
+
   $sth->finish;
 
-  DBI->trace(0);
+#  DBI->trace(0);
 }
 
 sub test2 {
@@ -216,6 +216,8 @@ sub test5 {
 # Test for rollback.
 sub test6 {
   my $dbh = shift;
+
+#  DBI->trace(4);
 
   $dbh->begin_work;
 

@@ -18,6 +18,7 @@ t/base.t
 t/fail.t
 t/login.t
 t/main.t
+t/multi_sth.t
 t/place.t
 t/exec.t
 t/nsql.t

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.13 2004/07/23 06:51:45 mpeppler Exp $
+# $Id: main.t,v 1.14 2004/11/26 09:48:06 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -198,6 +198,7 @@ if($DBI::VERSION >= 1.34) {
 } else {
   
 }
+
 
 $dbh->disconnect;
 

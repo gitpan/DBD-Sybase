@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.75 2004/11/25 13:34:58 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.77 2004/11/26 10:37:21 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -94,6 +94,7 @@ static int toggle_autocommit(SV *dbh, imp_dbh_t *imp_dbh, int flag);
 static int date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
 		    char *buff, CS_INT len, int type, CS_LOCALE *locale);
 static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt);
+static int cmd_execute(SV *sth, imp_sth_t *imp_sth);
 
 static CS_INT BLK_VERSION;
 
@@ -1028,6 +1029,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     imp_dbh->blkLogin[0]         = 0;
 
     imp_dbh->dateFmt             = 0;
+    imp_dbh->inUse               = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -1941,6 +1943,11 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if(kl == 11 && strEQ(key, "LongReadLen")) {
 	CS_INT value = SvIV(valuesv);
 	CS_RETCODE ret;
+
+	if(imp_dbh->inUse) {
+	    warn("Can't set LongReadLen because the database handle is in use.");
+	    return FALSE;
+	}
 	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_TEXTSIZE, 
 			 &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
@@ -1955,6 +1962,12 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if(kl == 21 && strEQ(key, "syb_quoted_identifier")) {
 	CS_INT value = SvIV(valuesv);
 	CS_RETCODE ret;
+
+	if(imp_dbh->inUse) {
+	    warn("Can't set syb_quoted_identifier because the database handle is in use.");
+	    return FALSE;
+	}
+
 	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_QUOTED_IDENT, 
 			 &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
@@ -2017,6 +2030,12 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 #if defined(CS_OPT_ROWCOUNT)
 	CS_INT value = SvIV(valuesv);
 	CS_RETCODE ret;
+
+	if(imp_dbh->inUse) {
+	    warn("Can't set syb_rowcount because the database handle is in use.");
+	    return FALSE;
+	}
+
 	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_ROWCOUNT, 
 			 &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
@@ -2558,7 +2577,12 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     /* Check to see if the syb_bcp_attribs flag is set */
     getBcpAttribs(imp_sth, attribs);
 
-    if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
+    if(DBIS->debug >= 2)
+	PerlIO_printf(DBILOGFP, 
+		      "    syb_st_prepare() -> inUse = %d\n",
+		      imp_dbh->inUse);
+
+    if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth)) || imp_dbh->inUse) {
 	int retval = 1;
 
 	if(imp_dbh->noChildCon) { /* inhibit child connections to be created */
@@ -2584,13 +2608,6 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	if(!retval)
 	    return retval;
     }
-
-#if 0
-    if(imp_dbh->sql != NULL)
-        safefree(imp_dbh->sql);
-    imp_dbh->sql = (char*)safemalloc(strlen(statement)+1);
-    strcpy(imp_dbh->sql,statement);
-#endif
 
     if(imp_sth->statement != NULL)
 	safefree(imp_sth->statement);
@@ -2634,8 +2651,11 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    return 0;
 	}
 	    
-	/* delay the ct_command() to the syb_st_execute() call */
 	imp_sth->cmd = NULL;
+	if(cmd_execute(sth, imp_sth) != 0) {
+	    return 0;
+	}
+
 	ret = CS_SUCCEED;
     }    
 
@@ -2645,6 +2665,13 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_sth->doProcStatus = imp_dbh->doProcStatus;
 
     DBIc_on(imp_sth, DBIcf_IMPSET);
+    if(!imp_sth->connection) {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, 
+			  "    syb_st_prepare() -> set inUse\n");
+	imp_dbh->inUse = 1;
+    }
+
 /*    DBIc_ACTIVE_on(imp_sth); */
 
     return 1;
@@ -2900,6 +2927,24 @@ describe(imp_sth, restype)
     return retcode == CS_SUCCEED;
 }
 
+static void
+clear_sth_flags(SV *sth, imp_sth_t *imp_sth)
+{
+    D_imp_dbh_from_sth;
+
+    if(DBIS->debug >= 2)
+	PerlIO_printf(DBILOGFP, "    clear_sth_flags() -> resetting ACTIVE, moreResults, dyn_execed, exec_done\n");
+    imp_sth->moreResults = 0;
+    imp_sth->dyn_execed = 0;
+    imp_sth->exec_done  = 0;
+    if(!imp_sth->connection) {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, 
+			  "    clear_sth_flags() -> reset inUse flag\n");
+	imp_dbh->inUse = 0;
+    }
+}
+
 static int
 st_next_result(sth, imp_sth)
     SV *sth;
@@ -3046,9 +3091,7 @@ st_next_result(sth, imp_sth)
 	    PerlIO_printf(DBILOGFP, 
 			  "    st_next_result() -> got %s: resetting ACTIVE, moreResults, dyn_execed, exec_done\n",
 			  restype == CS_CMD_DONE ? "CS_CMD_DONE" : "CS_CMD_FAIL");
-	imp_sth->moreResults = 0;
-	imp_sth->dyn_execed  = 0;
-	imp_sth->exec_done   = 0;
+	clear_sth_flags(sth, imp_sth);
 	DBIc_ACTIVE_off(imp_sth);
     } else {
 	DBIc_ACTIVE_on(imp_sth);
@@ -3325,25 +3368,10 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
     return (ret == CS_SUCCEED ? -1 : -2);
 }
 
-int      
-syb_st_execute(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+static int
+cmd_execute(SV *sth, imp_sth_t *imp_sth)
 {
-    dTHR;
     D_imp_dbh_from_sth;
-    int restype;
-
-    imp_dbh->lasterr = 0;
-    imp_dbh->lastsev = 0;
-
-    if(imp_sth->type == 2) {
-	return syb_blk_execute(imp_dbh, imp_sth, sth);
-    }
-
-    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
-	if(syb_db_opentran(NULL, imp_dbh) == 0)
-	    return -2; 
 
     if(!imp_sth->dyn_execed) {
 	if(!imp_sth->cmd) {
@@ -3356,40 +3384,68 @@ syb_st_execute(sth, imp_sth)
 	if(ct_command(imp_sth->cmd, CS_LANG_CMD, imp_sth->statement,
 		      CS_NULLTERM, CS_UNUSED) != CS_SUCCEED) {
 	    if(DBIS->debug >= 2)
-		PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
+		PerlIO_printf(DBILOGFP, "    cmd_execute() -> ct_command() failed (cmd=%x, statement=%s, imp_sth=%x)\n", imp_sth->cmd, imp_sth->statement, imp_sth);
 	    return -2;
 	}
 	if(DBIS->debug >= 2)
-	    PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_command() OK\n");
+	    PerlIO_printf(DBILOGFP, "    cmd_execute() -> ct_command() OK\n");
     }
 
     if(ct_send(imp_sth->cmd) != CS_SUCCEED) {
 	if(DBIS->debug >= 2)
-	    PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_send() failed\n");
+	    PerlIO_printf(DBILOGFP, "    cmd_execute() -> ct_send() failed\n");
 	
 	return -2;
     }
     if(DBIS->debug >= 2)
-	PerlIO_printf(DBILOGFP, "    syb_st_execute() -> ct_send() OK\n");
+	PerlIO_printf(DBILOGFP, "    cmd_execute() -> ct_send() OK\n");
 
     imp_sth->exec_done = 1;
-
-    restype = st_next_result(sth, imp_sth);
-
-#if 0
-    if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
+    if(!imp_sth->connection) {
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, 
-			  "    syb_st_execute() -> got %s: resetting ACTIVE, moreResults, dyn_execed\n",
-			  restype == CS_CMD_DONE ? "CS_CMD_DONE" : "CS_CMD_FAIL");
-	imp_sth->moreResults = 0;
-	imp_sth->dyn_execed  = 0;
-	imp_sth->exec_done   = 0;
-	DBIc_ACTIVE_off(imp_sth);
-    } else {
-	DBIc_ACTIVE_on(imp_sth);
+			  "    cmd_execute() -> set inUse flag\n");
+	imp_dbh->inUse = 1;
+    }
+
+    return 0;
+}
+
+int      
+syb_st_execute(sth, imp_sth)
+    SV *sth;
+    imp_sth_t *imp_sth;
+{
+    dTHR;
+    D_imp_dbh_from_sth;
+    int restype;
+
+#if 0
+    /* XXX */
+    if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
+	/* Need to detect a possible simultaneous call here and
+	   either inhibit it, or open a new connection */
     }
 #endif
+
+    imp_dbh->lasterr = 0;
+    imp_dbh->lastsev = 0;
+
+    if(imp_sth->type == 2) {
+	return syb_blk_execute(imp_dbh, imp_sth, sth);
+    }
+
+    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
+	if(syb_db_opentran(NULL, imp_dbh) == 0)
+	    return -2; 
+
+    if(!imp_sth->exec_done) {
+	if(cmd_execute(sth, imp_sth) != 0) {
+	    return -2;
+	}
+    }
+
+    restype = st_next_result(sth, imp_sth);
 
     if(restype == CS_CMD_FAIL)
 	return -2;
@@ -3654,7 +3710,7 @@ syb_st_fetch(sth, imp_sth)
     return av;
 }
 
-static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
+static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 {
     if(DBIS->debug >= 2)
 	PerlIO_printf(DBILOGFP, "    sth_blk_finish() -> Checking for pending rows\n");
@@ -3675,6 +3731,8 @@ static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
     DBIc_set(imp_dbh, DBIcf_AutoCommit, imp_sth->bcpAutoCommit);
     toggle_autocommit(NULL, imp_dbh, imp_sth->bcpAutoCommit);
 
+    clear_sth_flags(sth, imp_sth);
+
     imp_dbh->imp_sth = NULL;
     
     return 1;
@@ -3689,7 +3747,7 @@ int      syb_st_finish(sth, imp_sth)
     CS_CONNECTION *connection;
 
     if(imp_sth->bcp_desc) {
-	return sth_blk_finish(imp_dbh, imp_sth);
+	return sth_blk_finish(imp_dbh, imp_sth, sth);
     }
 
     connection = imp_sth->connection ? imp_sth->connection : 
@@ -3732,10 +3790,7 @@ int      syb_st_finish(sth, imp_sth)
 #endif
 	}
     }
-    if(DBIS->debug >= 2)
-	PerlIO_printf(DBILOGFP, "    syb_st_finish() -> resetting ACTIVE, moreResults, dyn_execed\n");
-    imp_sth->moreResults = 0;
-    imp_sth->dyn_execed = 0;
+    clear_sth_flags(sth, imp_sth);
     DBIc_ACTIVE_off(imp_sth);
     return 1;
 }
@@ -3846,7 +3901,7 @@ void     syb_st_destroy(sth, imp_sth)
 	if(DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy(): blkCleanUp()\n");
 	
-	sth_blk_finish(imp_dbh, imp_sth);
+	sth_blk_finish(imp_dbh, imp_sth, sth);
     }
     if(imp_sth->connection) {
 	ret = ct_close(imp_sth->connection, CS_FORCE_CLOSE);
@@ -3854,6 +3909,13 @@ void     syb_st_destroy(sth, imp_sth)
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy(): connection closed: %d\n", ret);
 	}
 	ct_con_drop(imp_sth->connection);
+    } else {
+	if(DBIc_ACTIVE(imp_sth)) {
+	    if(DBIS->debug >= 2) {
+		PerlIO_printf(DBILOGFP, "    syb_st_destroy(): reset inUse flag\n");
+	    }
+	    imp_dbh->inUse = 0;
+	}
     }
 
     DBIc_ACTIVE_off(imp_sth);	/* Don't want DBI warning about freeing active handle */

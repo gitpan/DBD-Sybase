@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.31 2004/09/21 12:51:56 mpeppler Exp $
+   $Id: dbdimp.h,v 1.32 2004/11/26 09:48:06 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -110,6 +110,10 @@ struct imp_dbh_st {
     int       failedDbUseFatal;
     int       bindEmptyStringNull;
     int       alwaysForceFailure; /* PR/471 */
+
+    int       inUse;		/* Set when the primary statement handle
+				   (the one that uses the connection referred
+				   to here) is in use. */
 
     char      *sql;
 

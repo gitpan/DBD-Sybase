@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: xblob.t,v 1.6 2004/07/05 08:02:32 mpeppler Exp $
+# $Id: xblob.t,v 1.8 2004/11/26 10:37:21 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -60,9 +60,9 @@ $sth->func('CS_SET', 2, {total_txtlen => length($image), log_on_update=>1}, 'ct_
 $sth->func($image, length($image), 'ct_send_data') || print $sth->errstr, "\n";
 $sth->func('ct_finish_send') || print $sth->errstr, "\n";
 
-#$dbh->{LongReadLen} = 100000;
-$sth = $dbh->prepare("select id, data from blob_test");
 $dbh->{LongReadLen} = 100000;
+$sth = $dbh->prepare("select id, data from blob_test");
+#$dbh->{LongReadLen} = 100000;
 #DBI->trace(3);
 $sth->{syb_no_bind_blob} = 1;
 $sth->execute;
@@ -134,9 +134,11 @@ if($DBI::VERSION >= 1.34) {
   $sth->syb_ct_send_data($image, length($image)) || print $sth->errstr, "\n";
   $sth->syb_ct_finish_send() || print $sth->errstr, "\n";
 
-#$dbh->{LongReadLen} = 100000;
-  $sth = $dbh->prepare("select id, data from blob_test");
+#DBI->trace(4);
   $dbh->{LongReadLen} = 100000;
+  $sth = $dbh->prepare("select id, data from blob_test");
+  #$dbh->{LongReadLen} = 100000;
+#DBI->trace(0);
 #DBI->trace(3);
   $sth->{syb_no_bind_blob} = 1;
   $sth->execute;
