@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.8 1998/10/08 00:02:10 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.9 1998/10/28 22:09:28 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -835,7 +835,6 @@ dbd_preparse(imp_sth, statement)
     STRLEN namelen;
 
     /* allocate room for copy of statement with spare capacity	*/
-    /* for editing '?' or ':1' into ':p1' so we can use obndrv.	*/
     imp_sth->statement = (char*)safemalloc(strlen(statement) * 3);
 
     /* initialise phs ready to be cloned per placeholder	*/
@@ -865,7 +864,6 @@ dbd_preparse(imp_sth, statement)
 	    sprintf(start,":p%d", ++idx); /* '?' -> ':p1' (etc)	*/
 	    dest = start+strlen(start);
 	    style = 3;
-
 	} else {			/* perhaps ':=' PL/SQL construct */
 	    continue;
 	}
@@ -915,12 +913,13 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_dbh->sql[MAX_SQL_SIZE - 2] = '.';
     imp_dbh->sql[MAX_SQL_SIZE - 3] = '.';
     imp_dbh->sql[MAX_SQL_SIZE - 4] = '.';
-    
+
+    imp_sth->statement = NULL;
     dbd_preparse(imp_sth, statement);
 	
     if((int)DBIc_NUM_PARAMS(imp_sth)) {
 	CS_INT restype;
-	int tt = rand(); 
+	int tt = rand() % 0xfffffff; 
 	int failed = 0;
 	CS_BOOL val;
 
@@ -985,8 +984,11 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 			 CS_NULLTERM, CS_UNUSED);
     }
 
-    if(imp_sth->statement != NULL)
+    if(imp_sth->statement != NULL) {
 	safefree(imp_sth->statement);
+	imp_sth->statement = NULL;
+    }
+    
 
     if(ret != CS_SUCCEED) 
 	return 0;

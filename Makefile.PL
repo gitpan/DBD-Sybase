@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.6 1998/10/08 00:11:30 mpeppler Exp $
+# $Id: Makefile.PL,v 1.7 1998/10/08 15:16:38 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -39,7 +39,7 @@ WriteMakefile('NAME'         => 'DBD::Sybase',
 	      ($] >= 5.005 && $^O eq 'MSWin32' && 
 	       $Config{archname} =~ /-object\b/i ? (CAPI => 'TRUE') :()),
 	      'dist' => {'TARFLAGS' => 'cvfF', 'COMPRESS' => 'gzip'},
-	      PM     => 'Sybase.pm'
+#	      PM     => 'Sybase.pm'
 	      );
 
 sub MY::postamble {

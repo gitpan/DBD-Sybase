@@ -1,4 +1,11 @@
-$Id: CHANGES,v 1.7 1998/10/07 23:59:13 mpeppler Exp $
+$Id: CHANGES,v 1.8 1998/10/28 22:11:24 mpeppler Exp $
+
+Release 0.10
+
+	Fixes stupid Makefile.PL bug.
+	Fixes incorrect freeing of memory when mixing prepare() 
+	statements with ? placeholders and prepare() statements
+	without them.
 
 Release 0.09
 

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.9 1998/10/08 00:01:30 mpeppler Exp $
+# $Id: Sybase.pm,v 1.10 1998/10/28 22:08:33 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.09';
-    my $Revision = substr(q$Revision: 1.9 $, 10);
+    $VERSION = '0.10';
+    my $Revision = substr(q$Revision: 1.10 $, 10);
 
     require_version DBI 0.89;
 
@@ -30,7 +30,7 @@
     $errstr = '';
     $sqlstate = "00000";
 
-    sub driver{
+    sub driver {
 	return $drh if $drh;
 	my($class, $attr) = @_;
 	$class .= "::dr";
@@ -448,6 +448,15 @@ instead.
 
 You can't set a particular database via the connect() call. Use
 $dbh->do("use $database") instead.
+
+You can run out of space in the tempdb database if you use a lot of
+calls with bind variables (ie ? style placeholders) without closing the
+connection. On my system, with an 8 MB tempdb database I run out of space
+after 760 prepare() statements with ? parameters. This is because
+Sybase creates stored procedures for each prepare() call. So my
+suggestion is to only use ? style placeholders if you really need them
+(i.e. if you are going to execute the same prepared statement multiple
+times).
 
 
 =head1 SEE ALSO

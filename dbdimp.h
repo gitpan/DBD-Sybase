@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.3 1998/05/20 22:39:41 mpeppler Exp mpeppler $
+   $Id: dbdimp.h,v 1.4 1998/10/28 22:08:53 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
