@@ -1,7 +1,7 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         DBD-Sybase
-version:      1.04_15
+version:      1.04_16
 version_from: Sybase.pm
 installdirs:  site
 requires:

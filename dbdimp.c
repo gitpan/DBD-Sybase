@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.77 2004/11/26 10:37:21 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.78 2004/12/15 07:37:55 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -95,6 +95,7 @@ static int date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 		    char *buff, CS_INT len, int type, CS_LOCALE *locale);
 static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt);
 static int cmd_execute(SV *sth, imp_sth_t *imp_sth);
+static CS_BINARY *to_binary(char *str, int *outlen);
 
 static CS_INT BLK_VERSION;
 
@@ -3201,7 +3202,7 @@ static CS_RETCODE
     PerlIO_printf(DBILOGFP, "Message String: %s\n", errmsg.msgstring);
     if(msg)
 	PerlIO_printf(DBILOGFP, "User Message: %s\n", msg);
-    //fflush(stderr);
+    /*fflush(stderr);*/
 #endif
     return CS_FAIL;
 }
@@ -4378,11 +4379,7 @@ date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 }
 
 static CS_NUMERIC
-to_numeric(str, locale, datafmt, type)
-    char *str;
-    CS_LOCALE *locale;
-    CS_DATAFMT *datafmt;
-    int type;
+to_numeric(char *str, CS_LOCALE *locale, CS_DATAFMT *datafmt, int type)
 {
     CS_NUMERIC mn;
     CS_DATAFMT srcfmt;
@@ -4454,9 +4451,7 @@ to_numeric(str, locale, datafmt, type)
 }
 
 static CS_MONEY
-to_money(str, locale)
-    char *str;
-    CS_LOCALE *locale;
+to_money(char *str, CS_LOCALE *locale)
 {
     CS_MONEY mn;
     CS_DATAFMT srcfmt, destfmt;
@@ -4491,8 +4486,7 @@ to_money(str, locale)
 }
 
 static CS_BINARY *
-to_binary(str)
-    char *str;
+to_binary(char *str, int *outlen)
 {
     CS_BINARY *b, *b_ptr;
     char s[3], *strtol_end;
@@ -4524,6 +4518,8 @@ to_binary(str)
 	 }
 	 *b_ptr++ = x;
      }
+     *outlen = b_len;
+
      return b;
 }
 
@@ -4633,7 +4629,8 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	    if((phs->sv_buf[0] == '0' && phs->sv_buf[1] == 'x') ||
 	       strspn(phs->sv_buf, "abcdefABCDEF0123456789") == value_len) 
 	    {
-		value = to_binary(phs->sv_buf);
+		value = to_binary(phs->sv_buf, &value_len);
+		/*warn("Got value = '%s'\n", value);*/
 		++free_value;
 	    } else {
 		value = phs->sv_buf;
@@ -5227,7 +5224,7 @@ static int getTableName(char *statement, char *table, int maxwidth)
 SV *syb_set_cslib_cb(SV *cb)
 {
 #if 0
-    //!defined(USE_CSLIB_CB)
+    /*!defined(USE_CSLIB_CB)*/
     warn("Can't set a CS-Lib callback: DBD::Sybase was not built with -DUSE_CSLIB_CB");
     return &PL_sv_undef;
 #else
@@ -5247,11 +5244,18 @@ static int toggle_autocommit(SV *dbh, imp_dbh_t *imp_dbh, int flag)
 {
     CS_BOOL    value;
     CS_RETCODE ret;
+    int current = DBIc_is(imp_dbh, DBIcf_AutoCommit);
 
+    if (DBIS->debug >= 4)
+	PerlIO_printf(DBILOGFP, "    toggle_autocommit: current = %s, new = %s\n",
+		      current ? "on" : "off",
+		      flag ? "on" : "off");
     if(flag) {
-	/* Going from OFF to ON - so force a COMMIT on any open 
-	   transaction */
-	syb_db_commit(dbh, imp_dbh);
+	if(!current) {
+	    /* Going from OFF to ON - so force a COMMIT on any open 
+	       transaction */
+	    syb_db_commit(dbh, imp_dbh);
+	}
 	if(!imp_dbh->doRealTran) {
 	    value = CS_FALSE;
 	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 

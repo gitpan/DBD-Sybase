@@ -1,4 +1,4 @@
-$Id: CHANGES,v 1.66 2004/12/01 07:20:55 mpeppler Exp $
+$Id: CHANGES,v 1.67 2004/12/15 07:37:55 mpeppler Exp $
 
 Release 1.05
 
@@ -22,6 +22,8 @@ Release 1.05
 
 	Bugs Fixed:
 
+	580 - Binding binary/varbinary values to placeholders sometimes
+	      fails.
 	575 - Fails three tests under Tru-64.
 	577 - perl Makefile.PL fails if umask is 0.
         578 - Better warning for calling $dbh->{LongReadLen} if $dbh is busy.

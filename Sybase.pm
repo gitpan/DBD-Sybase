@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.82 2004/12/01 07:20:55 mpeppler Exp $
+# $Id: Sybase.pm,v 1.83 2004/12/15 07:37:55 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04_15';
-    my $Revision = substr(q$Revision: 1.82 $, 10);
+    $VERSION = '1.04_16';
+    my $Revision = substr(q$Revision: 1.83 $, 10);
 
     require_version DBI 1.30;
 
@@ -97,7 +97,7 @@
 	# OK - let us see what sort of server we're connected to. We
 	# need this because some of the SQL commands that we need to send
 	# to the server depend on this information.
-	
+
         # Attributes that are passed in only get set *after* this routine
         # exits (i.e. when connect() returns).
         # So we need to set any syb_xxx attributes here:
