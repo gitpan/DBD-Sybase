@@ -1,11 +1,22 @@
-$Id: CHANGES,v 1.15 1999/05/31 21:39:37 mpeppler Exp $
+$Id: CHANGES,v 1.16 1999/06/22 07:33:15 mpeppler Exp $
+
+Release 0.18
+
+	Add $h->{syb_chained_txn} attribute to switch between CHAINED
+	transactions and explicit named transactions for AutoCommit=0
+	mode. The default is for syb_chained_txn to be off (ie 0.13 behaviour).
+	Fixed typo in syb_db_commit() to actually commit instead of doing
+	a rollback.
+	Added an autocommit.t test (which still needs some work).
+	Disable opening new connection for secondary $sth handles off of a
+	single $dbh handle when AutoCommit == 0.
 
 Release 0.17
 
 	Fix AutoCommit = 0 problems introduced with 0.15 for MS-SQL or older
 	Sybase server (ie TDS 4.x protocol connections).
-	Add syb_dynamic_supported $dbh attribute to check whether the connection
-	supports ?-style placeholders.
+	Add syb_dynamic_supported $dbh attribute to check whether the 
+	connection supports ?-style placeholders.
 
 Release 0.16
 

@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.16 1999/05/31 21:39:15 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.17 1999/06/22 07:33:06 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -468,7 +468,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->showSql       = 0;
     imp_dbh->showEed       = 0;
     imp_dbh->flushFinish   = 0;
-    imp_dbh->doRealTran    = 0;
+    imp_dbh->doRealTran    = 1;	/* default to use non-chained transaction mode */
+    imp_dbh->chainedSupported = 1;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -700,7 +701,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     if(imp_dbh->database[0])
 	syb_db_use(imp_dbh, connection);
 
-    if(!imp_dbh->doRealTran) {
+    if(imp_dbh->chainedSupported) {
 	CS_BOOL value;
 	if(DBIc_is(imp_dbh, DBIcf_AutoCommit))
 	    value = CS_FALSE;
@@ -709,8 +710,10 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 
 	retcode = ct_options(connection, CS_SET, CS_OPT_CHAINXACTS, 
 			     &value, CS_UNUSED, NULL);
-	if(retcode == CS_FAIL)
+	if(retcode == CS_FAIL) {
 	    imp_dbh->doRealTran = 1;
+	    imp_dbh->chainedSupported = 0;
+	}
     }
 
     return connection;
@@ -811,9 +814,9 @@ int      syb_db_commit(dbh, imp_dbh)
 
     cmd = syb_alloc_cmd(imp_dbh->connection);
     if(imp_dbh->doRealTran)
-	sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
+	sprintf(buff, "\nCOMMIT TRAN %s\n", imp_dbh->tranName);
     else
-	strcpy(buff, "\nROLLBACK TRAN\n");
+	strcpy(buff, "\nCOMMIT TRAN\n");
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_commit() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -990,6 +993,22 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     int on;
     char *key = SvPV(keysv,kl);
 
+    if (kl == 15 && strEQ(key, "syb_chained_txn")) {
+	on = SvTRUE(valuesv);
+	if(imp_dbh->chainedSupported) {
+	    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
+		syb_db_commit(dbh, imp_dbh);
+	    if(on) {
+		imp_dbh->doRealTran = 0;
+	    } else {
+		imp_dbh->doRealTran = 1;
+	    }
+	} else {
+	    /* XXX - should this issue a warning???? */
+	}
+
+	return TRUE;
+    }
     if (kl == 10 && strEQ(key, "AutoCommit")) {
 	CS_BOOL    value;
 	CS_RETCODE ret;
@@ -1131,6 +1150,12 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = &sv_undef;
 	}
     }
+    if (kl == 15 && strEQ(key, "syb_chained_txn")) {
+	if(imp_dbh->doRealTran)
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
     if (kl == 16 && strEQ(key, "syb_flush_finish")) {
 	if(imp_dbh->flushFinish)
 	    retsv = newSViv(1);
@@ -1246,6 +1271,8 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
     if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
+	if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
+	    croak("Panic: Can't have multiple statement handles on a singe database handle when AutoCommit is OFF");
 	if((imp_sth->connection = syb_db_connect(imp_dbh)) == NULL) {
 	    return 0;
 	}

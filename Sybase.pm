@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.17 1999/05/31 21:38:46 mpeppler Exp $
+# $Id: Sybase.pm,v 1.18 1999/06/22 07:22:04 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.17';
-    my $Revision = substr(q$Revision: 1.17 $, 10);
+    $VERSION = '0.18';
+    my $Revision = substr(q$Revision: 1.18 $, 10);
 
     require_version DBI 1.02;
 
@@ -412,7 +412,7 @@ firsthand.
     $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
 
 B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
-features, ?-style placeholders and non-AutoCommit mode, in particular.
+features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
 
 =back
 
@@ -421,6 +421,7 @@ together by separating each entry with a semi-colon:
 
     $dbh = DBI->connect("dbi:Sybase:server=ENGINEERING;packetSize=8192;language=us_english;charset=iso_1",
 			$user, $pwd);
+
 
 =head1 Handling Multiple Result Sets
 
@@ -456,7 +457,6 @@ written like this:
             ... do something with the data
          }
      } while($sth->{syb_more_results});
-     $sth->finish;
 
 You can get the type of the current result set with 
 $sth->{syb_result_type}. This returns a numerical value, as defined in 
@@ -538,7 +538,7 @@ Example:
 
 =item syb_flush_finish
 
-B<NEW> If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
+If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
 any results remaining for the current command by actually fetching them.
 The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
 I<appears> to cause connections to hang or to fail in certain cases (although
@@ -546,9 +546,22 @@ I've never witnessed this myself.)
 
 =item syb_dynamic_supported
 
-B<NEW> This is a read-only attribute that returns TRUE if the dataserver
+This is a read-only attribute that returns TRUE if the dataserver
 you are connected to supports ?-style placeholders. Typically placeholders are
 not supported when using DBD::Sybase to connect to a MS-SQL server.
+
+=item syb_chained_txn
+
+If set then we use CHAINED transactions when AutoCommit is off. 
+Otherwise we issue an explicit BEGIN TRAN as needed. The default is off.
+
+This attribute should usually be used only during the connect() call:
+
+    $dbh = DBI->connect('dbi:Sybase:', $user, $pwd, {syb_chained_txn => 1});
+
+Using it at any other time with B<AutoCommit> turned B<off> will 
+B<force a commit> on the current handle.
+
 
 =back
 
@@ -617,7 +630,7 @@ Nov 15 1998 11:30AM
 
 =head1 Multiple active statements on one $dbh
 
-It is now possible to open multiple active statements on a single database 
+It is possible to open multiple active statements on a single database 
 handle. This is done by openeing a new physical connection in $dbh->prepare()
 if there is already an active statement handle for this $dbh.
 
@@ -625,13 +638,11 @@ This feature has been implemented to improve compatibility with other
 drivers, but should not be used if you are coding directly to the 
 Sybase driver.
 
-B<WARNING>: This feature should be used with care. In particular, because
-the SQL statements executed on the second (and subsequent) statement
-handles are sent over a different physical connection DBD::Sybase
-cannot guarantee a complete rollback if you have B<AutoCommit> set to B<OFF>.
-
-A future version may make a better attempt at getting this particular 
-problem right.
+If AutoCommit is B<OFF> then multiple statement handles on a single $dbh
+is B<NOT> supported. This is to avoid various deadlock problems that
+can crop up in this situation, and because you will not get real transactional
+integrity using multiple statement handles simultaneously as these in 
+reality refer to different physical connections.
 
 
 =head1 IMAGE and TEXT datatypes
@@ -649,25 +660,41 @@ and will be returned exactly as they were stored. Internally Sybase
 makes no distinction between TEXT and IMAGE columns - both can be
 used to store either text or binary data.
 
+Note that IMAGE or TEXT datatypes can not be passed as parameters
+when using ?-style placeholders, and ?-style placeholders can't refer
+to TEXT or IMAGE columns.
 
 
-=head1 Transactions and Transact-SQL
 
-When $h->{AutoCommit} is I<off> (ie I<0>) the DBD::Sybase driver
+=head1 AutoCommit, Transactions and Transact-SQL
+
+When $h->{AutoCommit} is I<off> all data modification SQL statements
+that you issue (insert/update/delete) will only take effect if you
+call $dbh->commit.
+
+DBD::Sybase implements this via two distinct methods, depending on 
+the setting of the $h->{syb_chained_txn} attribute and the version of the
+server that is being accessed.
+
+If $h->{syb_chained_txn} is I<off>, then the DBD::Sybase driver
 will send a B<BEGIN TRAN> before the first $dbh->prepare(), and
 after each call to $dbh->commit() or $dbh->rollback(). This works
 fine, but will cause any SQL that contains any I<CREATE TABLE>
-statements to fail. These I<CREATE TABLE> statements can be
+(or other DDL) statements to fail. These I<CREATE TABLE> statements can be
 burried in a stored procedure somewhere (for example,
-C<sp_helprotect> creates two temp tables when it is run).
+C<sp_helprotect> creates two temp tables when it is run). 
+You I<can> get around this limit by setting the C<ddl in tran> option
+(at the database level, via C<sp_dboption>.) You should be aware that
+this can have serious effects on performance as this causes locks to
+be held on certain system tables for the duration of the transaction.
 
-If you absolutely want to have manual commits (ie have
-B<AutoCommit> set to 0) and be able to run any arbitrary SQL, then
-you can use C<sp_dboption> to set the C<ddl in tran> option to C<TRUE>.
-However, the Sybase documentation warns that this can cause the system
-to seriouslys slow down as this causes locks to be set on certain
-system tables, and these locks will be held for the duration of the 
-transaction.
+If $h->{syb_chained_txn} is I<on>, then DBD::Sybase sets the
+I<CHAINED> option, which tells Sybase not to commit anything automatically.
+Again, you will need to call $dbh->commit() to make any changes to the data
+permanent. In this case Sybase will not let you issue I<BEGIN TRAN> 
+statements in the SQL code that is executed, so if you need to execute
+stored procedures that have I<BEGIN TRAN> statements in them you 
+must use $h->{syb_chained_txn} = 0, or $h->{AutoCommit} = 1.
 
 =head1 Using ? Placeholders & bind parameters to $sth->execute
 
@@ -696,12 +723,16 @@ to $sth->execute or $dbh->do, which get inserted in the query, and any rows
 are returned.
 
 For those of you who are used to Transact-SQL there are some limitations
-to using this feature: In particular you can only pass a simple I<exec proc>
-call, or a simple I<select> statement (ie a statement that only returns a
-single result set). In addition, the ? placeholders can only appear in a 
+to using this feature: In particular you can B<not> pass parameters this
+way to stored procedures, and you can only execute a SQL statement
+that returns a single result set. In addition, the ? placeholders can only appear in a 
 B<WHERE> clause, in the B<SET> clause of an B<UPDATE> statement, or in the
 B<VALUES> list of an B<INSERT> statement. In particular you can't pass ?
 as a parameter to a stored procedure.
+
+?-style placeholders can B<NOT> be used to pass TEXT or IMAGE data
+items to the server. This is a limitation of the TDS protocol, not of
+DBD::Sybase.
 
 There is also a performance issue: OpenClient creates stored procedures in
 tempdb for each prepare() call that includes ? placeholders. Creating
@@ -714,7 +745,7 @@ stored procedures rather than use the ? placeholders in embedded SQL.
 
 Please see the discussion on Dynamic SQL in the 
 OpenClient C Programmer's Guide for details. The guide is available on-line
-at http://sybooks.sybase.com/dynaweb.
+at http://sybooks.sybase.com/
 
 
 =head1 BUGS

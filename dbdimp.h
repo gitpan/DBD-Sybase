@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.9 1999/05/31 21:39:27 mpeppler Exp $
+   $Id: dbdimp.h,v 1.10 1999/06/22 07:31:59 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -52,6 +52,7 @@ struct imp_dbh_st {
     char      tranName[32];
     int       inTransaction;
     int       doRealTran;
+    int       chainedSupported;
 
     char      uid[32];
     char      pwd[32];

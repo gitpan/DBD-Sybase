@@ -1,4 +1,4 @@
-$Id: README,v 1.9 1999/05/31 21:38:29 mpeppler Exp $
+$Id: README,v 1.10 1999/06/22 07:31:33 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -22,7 +22,7 @@ DBI module, latest release. DBI is available from CPAN, in
 
 The Sybase OpenClient libraries are of course available from Sybase.
 For Linux you can get the full Sybase ASE 11.0.3.3 release for free
-(this includes the server and the client libraries.) 
+(this includes the server and the client libraries.)
 See http://linux.sybase.com for details, or my homepage 
 (http://www.mbay.net/~mpeppler).
 
@@ -31,6 +31,17 @@ there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
 Recent changes:
+
+Release 0.18
+
+	Add $h->{syb_chained_txn} attribute to switch between CHAINED
+	transactions and explicit named transactions for AutoCommit=0
+	mode. The default is for syb_chained_txn to be off (ie 0.13 behaviour).
+	Fixed typo in syb_db_commit() to actually commit instead of doing
+	a rollback.
+	Added an autocommit.t test (which still needs some work).
+	Disable opening new connection for secondary $sth handles off of a
+	single $dbh handle when AutoCommit == 0.
 
 Release 0.17
 
@@ -72,19 +83,35 @@ Building:
 
 This version attempts to find out which libraries it needs by looking
 at $SYBASE/lib. This behaviour is experimental, and will only work
-on Unix systems (ie on Win32 and VMS you still have to edit the CONFIG
+on Unix and VMS systems (ie on Win32 you still have to edit the CONFIG
 file the old way), but appears to work fine on the two systems I have
-access to (Sybase 11.5/Solaris 7 & Sybase 11.0.3.3/linux). It assumes
-that $SYBASE is set and points to the Sybase installation directory that
-you want to use to build DBD::Sybase.
+access to (Sybase 11.5/Solaris 7 & Sybase 11.0.3.3/linux) and on Sybase
+10.0.2.3/OpenVMS AXP 7.1. It assumes that $SYBASE is set and points to 
+the Sybase installation directory that you want to use to build DBD::Sybase.
 
-Run perl Makefile.PL in the normal way, without editing CONFIG. If 
-there are no error messages (ie no missing libraries), run make & make test.
+Start by editing the PWD file to set a valid user, password and server
+for the test scripts to use.
+Make sure that the SYBASE environment variable points to the Sybase
+installation that you want to use for this build.
 
-If either of these fail you will probably need to use the CONFIG file.
+Then run 
+	perl Makefile.PL
+If there were warnings about missing libraries, go to the manual 
+configuration, below.
+Run
+	make
+If the make failed, go to the manual configuration, below.
+Run
+	make test
+If this succeeds you can install the package, via
+	make install
+(which you probably have to run as root.)
 
-To force perl Makefile.PL to make use of the information in the CONFIG file
-you need to run it with the --file option:
+Manual Configuration:
+
+If the automatic configuration fails, then you will have to edit the
+CONFIG file, and set the EXTRA_LIBS entry according to your OS and
+Sybase release, and then run 
 	perl Makefile.PL --file
 
 The CONFIG file can be used to set certain system variables that
@@ -125,133 +152,9 @@ The regression tests are minimal at the moment so don't necessarily
 believe all is fine if the tests succeed...
 
 
-
 Let me repeat: this is ALPHA software - testing has been minimal!!!
 
-
-
-So what is implemented?
-
-Lets take the list at the bottom of DBI.pm:
-
-$dbh = DBI->connect($data_source, $username, $auth);
-$dbh = DBI->connect($data_source, $username, $auth, \%attr);
-
-$rc  = $dbh->disconnect;
-
-$rv  = $dbh->do($statement);
-$rv  = $dbh->do($statement, \%attr);			%attr is ignored
-$rv  = $dbh->do($statement, \%attr, @bind_values);	%attr is ignored
-
-$sth = $dbh->prepare($statement);
-$sth = $dbh->prepare($statement, \%attr);		%attr is ignored
-
-$rc = $sth->bind_col($col_num, \$col_variable);
-$rc = $sth->bind_columns(\%attr, @list_of_refs_to_vars_to_bind);
-
-$rv = $sth->bind_param($param_num, $bind_value);
-$rv = $sth->bind_param($param_num, $bind_value, $bind_type);	$bind_type ignored
-$rv = $sth->bind_param($param_num, $bind_value, \%attr);	%attr ignored
-
-$rv = $sth->execute;
-$rv = $sth->execute(@bind_values);
-
-@row_ary  = $sth->fetchrow_array;
-$ary_ref  = $sth->fetchrow_arrayref;
-$hash_ref = $sth->fetchrow_hashref;
-
-$rc = $sth->finish;
-
-$rv = $sth->rows;
-
-$rc  = $dbh->commit;
-$rc  = $dbh->rollback;
-
-$sql = $dbh->quote($string);
-
-$rc  = $h->err;
-$str = $h->errstr;
-$rv  = $h->state;				Not supported
-
-
-$sth->{NAME}       (\@)				Yes
-$sth->{NULLABLE}   (\@)				Yes
-$sth->{TYPE}       (\@)				Yes
-$sth->{PRECISION}  (\@)				Yes
-$sth->{SCALE}      (\@)				Yes
-
-$sth->{NUM_OF_FIELDS}  ($)			Yes
-$sth->{NUM_OF_PARAMS}  ($)			Yes
-
----------------------------------------------------------------
-
-
-Special behaviour:
-==================
-
-The Sybase API allows you to submit SQL code to the server that can
-return multiple result sets. When using Sybase::CTlib, for example, this is
-handled by using a nested while loop:
-
-while($dbh->ct_results($restype) == CS_SUCCEED) {
-    next unless $dbh->ct_fetchable($restype);
-
-    while(@dat = $dbh->ct_fetch) {
-       ....
-    }
-}
-
-The DBI API does not (normally) handle this situation. But because
-this situation can arise without the user knowing (typically when
-executing a stored procedure) I have coded fetchrow() logic
-so that multiple result sets can still be fetched. 
-
-This is done via special attribute in $sth (syb_more_results) which
-you should check after $sth->fetchrow() returns an empty array. If this
-attribute is true, then you can call $sth->fetchrow() again to get the
-next result set.
-
-One problem with this is that the standard $sth attributes (NAME,
-NULLABLE, etc) will have the values of the NEXT result set if
-$sth->{syb_more_results} is true and $sth->fetchrow returns an empty
-array.
-
-Here is an example script:
-
-
-use DBI;
-
-$dbh = DBI->connect('dbi:Sybase:', 'mpeppler', '', {RaiseError => 1});
-
-$sth = $dbh->prepare("
-select log_date, log_by from BugTrack..bug_log
-where id < 10
-order by id
-compute count(id) by id
-select * from BugTrack..bug where id < 10
-
-declare \@acc char(10)
-declare \@date datetime
-declare \@open_val money
-declare \@open_val_t money
-select \@acc='abcd', \@date='Jan 1 1997'
-exec BugTrack..t_proc \@acc, \@date out, \@open_val out, \@open_val_t out
-");
-
-$sth->execute;
-AGAIN:
-while($dat = $sth->fetchrow_hashref) {
-    foreach (keys(%$dat)) {
-	print "$_: $dat->{$_} ";
-    }
-    print "\n";
-}
-if($sth->{syb_more_results}) {
-    print "More data on the way...\n";
-    goto AGAIN;
-}
-
-__END__
+See perldoc DBD::Sybase for details about the package.
 
 Comments, criticism, etc. welcome!
 

@@ -8,7 +8,7 @@
 
 =head2 Driver Name, Version, Author and Contact Details
 
-This driver summary is for DBD::Sybase version 0.13.
+This driver summary is for DBD::Sybase version 0.18.
 
 The driver author is Michael Peppler and he can be contacted via the
 dbi-users mailing list, or at mpeppler@peppler.org
@@ -67,6 +67,37 @@ response.  If no response is received within that timeframe the command
 fails with a timeout error and the connection is marked dead. The
 default is to not timeout.  Setting a timeout of 0 is the same as no
 timeout. (This was added in the 0.14 release.)
+
+=item interfaces
+
+Specify the location of an alternate I<interfaces> file:
+
+=item scriptName
+
+Specify the name for this connection that will be displayed in sp_who
+(ie in the sysprocesses table in the I<program_name> column).
+
+=item hostname
+
+Specify the hostname that will be displayed by sp_who (and will be stored
+in the hostname column of sysprocesses)..
+
+=item tdsLevel
+
+Specify the TDS protocol level to use when connecting to the server.
+Valid values are CS_TDS_40, CS_TDS_42, CS_TDS_46, CS_TDS_495 and CS_TDS_50.
+In general this is automatically negotiated between the client and the 
+server, but in certain cases this may need to be forced to a lower level
+by the client. 
+
+I have heard rumors that setting this to CS_TDS_42 enables DBD::Sybase
+to connect to an MS-SQL 7.0 server, although I can't confirm that
+firsthand.
+
+    $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
+
+B<NOTE>: Setting the tdsLevel below CS_TDS_495 will disable a number of
+features, ?-style placeholders and CHAINED non-AutoCommit mode, in particular.
 
 =back
 
@@ -426,6 +457,70 @@ If set, then extended error information is included in the string returned
 by $dbh->errstr. Extended error information include the index causing a
 duplicate insert to fail, for example.
 
+=item syb_err_handler
+
+B<NEW> Note that the syntax for the error handler is experimental and
+may change in future versions.
+
+This attribute is used to set an ad-hoc error handler callback (ie a perl 
+subroutine) that gets called before the normal error handler does it's job.
+If this subroutine returns 0 then the error is ignored. This is useful
+for handling PRINT statements in Transact-SQL, for handling messages
+from the Backup Server, showplan output, dbcc output, etc.
+
+The subroutine is called with 7 parameters: the Sybase error number,
+the severity, the state, the line number in the SQL batch, the server name 
+(if available), the stored procedure name (if available), and the message
+text.
+
+Example:
+
+    %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6225);
+    sub err_handler {
+        my($err, $sev, $state, $line, $server, $proc, $msg) = @_;
+
+        if($showplan_msgs{$err}) { # it's a showplan message
+            print SHOWPLAN "$err - $msg\n";
+            return 0;    # This is not an error
+        }
+
+        return 1;
+    }
+
+    $dbh = DBI->connect('dbi:Sybase:server=troll', 'sa', '');
+    $dbh->{syb_err_handler} = \&err_handler;
+    $dbh->do("set showplan on");
+    open(SHOWPLAN, ">>/var/tmp/showplan.log") || die "Can't open showplan log: $!";
+    $dbh->do("exec someproc");    # get the showplan trace for this proc.
+    $dbh->disconnect;
+
+=item syb_flush_finish
+
+If $dbh->{syb_flush_finish} is set then $dbh->finish will drain
+any results remaining for the current command by actually fetching them.
+The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
+I<appears> to cause connections to hang or to fail in certain cases (although
+I've never witnessed this myself.)
+
+=item syb_dynamic_supported
+
+This is a read-only attribute that returns TRUE if the dataserver
+you are connected to supports ?-style placeholders. Typically placeholders are
+not supported when using DBD::Sybase to connect to a MS-SQL server.
+
+=item syb_chained_txn
+
+If set then we use CHAINED transactions when AutoCommit is off. 
+Otherwise we issue an explicit BEGIN TRAN as needed. The default is off.
+
+This attribute should usually be used only during the connect() call:
+
+    $dbh = DBI->connect('dbi:Sybase:', $user, $pwd, {syb_chained_txn => 1});
+
+Using it at any other time with B<AutoCommit> turned B<off> will 
+B<force a commit> on the current handle.
+
+
 =back
 
 And the following driver specific statement handle attributes:
@@ -465,9 +560,7 @@ Sybase does not support positioned updates or deletes.
 
 =head2 Differences from the DBI specification
 
-The LongReadLen and LongTruncOk attributes are not supported.
-
-Note that DBD::Pg does not fully parse the statement until
+Note that DBD::Sybase does not fully parse the statement until
 it's executed. Thus attributes like $sth->{NUM_OF_FIELDS} are not
 available until after $sth->execute has been called. This is valid
 behaviour but is important to note when porting applications
@@ -518,5 +611,5 @@ functionality and encourages you to use them.
 
 # This driver summary for DBD::Sybase is Copyright (c) 1999 Tim Bunce
 # and Michael Peppler.
-# $Id: dbd-sybase.pod,v 1.2 1999/05/16 18:28:04 mpeppler Exp $
+# $Id: dbd-sybase.pod,v 1.3 1999/06/22 07:21:55 mpeppler Exp $
 
