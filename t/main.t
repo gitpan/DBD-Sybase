@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.10 2004/06/11 11:52:00 mpeppler Exp $
+# $Id: main.t,v 1.11 2004/06/22 12:33:22 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -12,7 +12,7 @@ use _test;
 
 use Data::Dumper;
 
-BEGIN {print "1..16\n";}
+BEGIN {print "1..19\n";}
 END {print "not ok 1\n" unless $loaded;}
 use DBI;
 $loaded = 1;
@@ -157,10 +157,36 @@ do {
     ++$result_set;
 } while($sth->{syb_more_results});
 
+# Test last_insert_id:
+if(0) {
+    $dbh->do("create table #idtest(id numeric(9,0) identity, c varchar(20))");
+    $dbh->do("insert #idtest (c) values ('123456')");
+    #DBI->trace(10);
+    my $value = $dbh->last_insert_id();
+    if($value > 0) {
+	print "ok 17\n";
+    } else {
+	print "not ok 17\n";
+    }
+    #DBI->trace(0);
+} else {
+    print "ok 17\n";
+}
+
 
 #my $ti = $dbh->type_info_all;
 #foreach
 my @type_info = $dbh->type_info(DBI::SQL_CHAR);
+if(@type_info > 1) {
+    print "ok 18\n";
+} else {
+    print "not ok 18\n";
+}
+if(exists($type_info[0]->{DATA_TYPE})) {
+    print "ok 19\n";
+} else {
+    print "not ok 19\n";
+}
 print Dumper(\@type_info);
 
 $dbh->disconnect;

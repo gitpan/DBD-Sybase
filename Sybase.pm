@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.59 2004/06/16 13:44:54 mpeppler Exp $
+# $Id: Sybase.pm,v 1.61 2004/06/22 12:41:12 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.03';
-    my $Revision = substr(q$Revision: 1.59 $, 10);
+    $VERSION = '1.04';
+    my $Revision = substr(q$Revision: 1.61 $, 10);
 
     require_version DBI 1.30;
 
@@ -209,6 +209,24 @@
 	my $rows = $sth->rows;
 
 	($rows == 0) ? "0E0" : $rows;
+    }
+
+    # This will only work if the statement handle used to do the insert
+    # has been properly freed. Otherwise this will try to fetch @@identity
+    # from a different (new!) connection - which is obviously wrong.
+    sub last_insert_id {
+	my ($dbh, $catalog, $schema, $table, $field, $attr) = @_;
+	# parameters are ignored.
+	
+	my $sth = $dbh->prepare('select @@identity');
+	if(!$sth->execute) {
+	    return undef;
+	}
+	my $value;
+	($value) = $sth->fetchrow_array;
+	$sth->finish;
+	
+	return $value;
     }
 
     sub table_info {
@@ -1492,6 +1510,24 @@ permanent. In this case Sybase will not let you issue I<BEGIN TRAN>
 statements in the SQL code that is executed, so if you need to execute
 stored procedures that have I<BEGIN TRAN> statements in them you 
 must use $h->{syb_chained_txn} = 0, or $h->{AutoCommit} = 1.
+
+=head2 Behavior of $dbh->last_insert_id
+
+This version of DBD::Sybase includes support for the last_insert_id() call,
+with the following caveats:
+
+The last_insert_id() call is simply a wrapper around a "select @@identity"
+query. To be successful (i.e. to return the correct value) this must
+be executed on the same connection as the INSERT that generated the
+new IDENTITY value. Therefore the statement handle that was used to
+perform the insert B<must> have been closed/freed before last_insert_id()
+can be called. Otherwise last_insert_id() will be forced to open a different
+connection to perform the query, and will return an invalid value (usually
+in this case it will return 0).
+
+last_insert_id() ignores any parameters passed to it, and will NOT return
+the last @@identity value generated in the case where placeholders were used,
+or where the insert was encapsulated in a stored procedure.
 
 =head1 Using ? Placeholders & bind parameters to $sth->execute
 

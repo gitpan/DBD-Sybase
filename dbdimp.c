@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.57 2004/06/11 11:52:00 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.58 2004/06/22 12:33:22 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -932,9 +932,13 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("maxConnect must be positive, not '%s'", s);
             return 0;
 	}
+#if defined(CS_MAX_CONNECT)
         if((retcode = ct_config(context, CS_SET, CS_MAX_CONNECT, (CS_VOID*)&i,
 				CS_UNUSED, NULL)) != CS_SUCCEED)
 	    croak("ct_config(max_connect) failed");
+#else
+	warn("ct_config(max_connect) not supported");
+#endif
     }
     if(imp_dbh->ifile[0]) {
 	if(DBIS->debug >= 2)
@@ -1152,6 +1156,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
     }
+#if defined(CS_PROP_SSL_CA)
     if(retcode == CS_SUCCEED)
     {
 	if(imp_dbh->sslCAFile[0] != 0) {
@@ -1164,6 +1169,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
     }
+#endif
     
     if (imp_dbh->host[0] && imp_dbh->port[0]) {
 #if defined(CS_SERVERADDR)
