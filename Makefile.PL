@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.36 2004/10/01 13:05:18 mpeppler Exp $
+# $Id: Makefile.PL,v 1.40 2004/11/25 13:36:12 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -132,10 +132,15 @@ sub configure {
 
     checkChainedAutoCommit();
 
+#    print "OS = $^O\n";
+
     if($^O eq 'MSWin32') {
 	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
     } elsif($^O eq 'VMS') {
 	$lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb -llibblk.olb $attr{EXTRA_LIBS}";
+    } elsif($^O =~ /cygwin/) {
+        $lib_string = "-L$SYBASE/lib -lct -lcs -lblk";
+        $inc_string .= " -D_MSC_VER=800";
     } else {
 	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS}, $version);
 	if($file) {
@@ -148,7 +153,7 @@ sub configure {
 		$lib_string =~ s/-l$_/-lsyb$_/;
 	    }
 	} elsif($^O =~ /linux|freebsd/i) {
-	    $lib_string =~ s/ltcl/lsybtcl/;
+	    $lib_string =~ s/-ltcl/-lsybtcl/;
 	}
 
 	# Logic to replace normal libs with _r (re-entrant) libs if
@@ -187,7 +192,9 @@ sub configure {
 	# If we are building for a 64 bit platform that also supports 32 bit
 	# (i.e. Solaris 8, HP-UX11, etc) then we need to make some adjustments
 	if( $Config{use64bitall} ) {
-	    $inc_string .= ' -DSYB_LP64';
+	    # Tru64/DEC OSF does NOT use the SYB_LP64 define
+	    # as it is ALWAYS in 64 bit mode.
+	    $inc_string .= ' -DSYB_LP64' unless $^O eq 'dec_osf';
 	    
 	    print "Running in 64bit mode - looking for '64' libraries...\n";
 	    opendir(SYBLIB,"$SYBASE/lib")
@@ -346,11 +353,11 @@ sub configPwd {
     my $old_umask;
     unless($^O =~ /MSWin32/) {
 	$old_umask = umask(077);
-	die "cannot umask(): $!" unless $old_umask;
+	warn "cannot umask(): $!" unless defined($old_umask);
     }
     open(OUT, ">$written_pwd_file") || die "Can't open $written_pwd_file: $!";
     unless($^O =~ /MSWin32/) {
-	umask($old_umask) != 077 && die "strange return from umask()";
+	umask($old_umask) != 077 && warn "strange return from umask()";
     }
     print OUT <<EOF;
 # This file contains optional login id, passwd and server info for the test

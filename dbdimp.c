@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.72 2004/10/07 17:56:55 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.75 2004/11/25 13:34:58 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -104,9 +104,12 @@ static perl_mutex context_alloc_mutex[1];
 /*#define USE_CSLIB_CB 1 */
 
 static CS_CONTEXT *context;
+static CS_LOCALE *locale;
 static char scriptName[255];
 static char hostname[255];
 static char *ocVersion;
+
+#define LOCALE(s)	((s)->locale ? (s)->locale : locale)
 
 static SV *cslib_cb;
 
@@ -133,7 +136,6 @@ cslibmsg_cb(CS_CONTEXT *context, CS_CLIENTMSG *errmsg)
 	    PerlIO_printf(DBILOGFP, "    cslibmsg_cb -> %s\n", errmsg->osstring);
 	}
     }
-
 
     if(cslib_cb)
     {
@@ -704,22 +706,31 @@ void syb_init(dbistate)
     MUTEX_INIT (context_alloc_mutex);
 #endif
 
+#if defined(CS_VERSION_150)
+    if(retcode != CS_SUCCEED) {
+	cs_ver = CS_VERSION_150;
+	retcode = cs_ctx_alloc(cs_ver, &context);
+    }
+#endif
 #if defined(CS_VERSION_125)
-    cs_ver = CS_VERSION_125;
-    retcode = cs_ctx_alloc(cs_ver, &context);
+    if(retcode != CS_SUCCEED) {
+	cs_ver = CS_VERSION_125;
+	retcode = cs_ctx_alloc(cs_ver, &context);
+    }
+#endif
 #if defined(CS_VERSION_120)
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_120;
 	retcode = cs_ctx_alloc(cs_ver, &context);
     }
+#endif
 #if defined(CS_VERSION_110)
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_110;
 	retcode = cs_ctx_alloc(cs_ver, &context);
     }
 #endif
-#endif
-#endif
+
     if(retcode != CS_SUCCEED) {
 	cs_ver = CS_VERSION_100;
 	retcode = cs_ctx_alloc(cs_ver, &context);
@@ -728,6 +739,10 @@ void syb_init(dbistate)
     if(retcode != CS_SUCCEED)
 	croak("DBD::Sybase initialize: cs_ctx_alloc(%d) failed", cs_ver);
 
+#if defined(CS_VERSION_150)
+    if(cs_ver == CS_VERSION_150)
+	BLK_VERSION = BLK_VERSION_150;
+#endif
 #if defined(CS_VERSION_125)
     if(cs_ver == CS_VERSION_125)
 	BLK_VERSION = BLK_VERSION_125;
@@ -806,8 +821,10 @@ void syb_init(dbistate)
 	strcpy(scriptName, SvPV(sv, lna));
 	if((p = strrchr(scriptName, '/')))
 	{
+	    char tmp[255];
 	    ++p;
-	    strcpy(scriptName, p);
+	    strncpy(tmp, p, 250);
+	    strcpy(scriptName, tmp);
 	}
 	/* PR 506 */
 	if(!strcmp(scriptName, "-e")) {
@@ -828,6 +845,31 @@ void syb_init(dbistate)
 	
 	PerlIO_printf(DBILOGFP, "    syb_init() -> DBD::Sybase %s initialized\n", p);
 	PerlIO_printf(DBILOGFP, "    OpenClient version: %s\n", ocVersion);
+    }
+
+    if ((retcode = cs_loc_alloc( context, &locale )) != CS_SUCCEED) {
+	warn("cs_loc_alloc failed");
+    }
+    if(retcode == CS_SUCCEED) {
+	if ((retcode = cs_locale( context, CS_SET, locale, CS_LC_ALL, (CS_CHAR*)NULL,
+				  CS_UNUSED, (CS_INT*)NULL)) != CS_SUCCEED) 
+	{
+	    warn("cs_locale(CS_LC_ALL) failed");
+	}
+    }
+
+    if(retcode == CS_SUCCEED) {
+	CS_INT type = CS_DATES_SHORT;
+	if((retcode = cs_dt_info(context, CS_SET, locale, CS_DT_CONVFMT, CS_UNUSED, 
+				 (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL)) != CS_SUCCEED)
+	    warn("cs_dt_info() failed");
+    }
+	
+    if(retcode == CS_SUCCEED) {
+	if((retcode = cs_config(context, CS_SET, CS_LOC_PROP, locale, 
+				CS_UNUSED, NULL)) != CS_SUCCEED) {
+		warn("cs_config(CS_LOC_PROP) failed");
+	}
     }
 }
 
@@ -1116,6 +1158,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_TIMEOUT) failed");
      }
 
+#if 0
     if(imp_dbh->locale == NULL) {
 	CS_INT type = CS_DATES_SHORT;
 
@@ -1159,18 +1202,69 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 
 	imp_dbh->locale = locale;
     }
+#else
+    if(imp_dbh->language[0] != 0 || imp_dbh->charset[0] != 0) {
+	CS_INT type = CS_DATES_SHORT;
+
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> using private CS_LOCALE data\n");
+	/* Set up the proper locale - to handle character sets, etc. */
+	if ((retcode = cs_loc_alloc( context, &imp_dbh->locale ) != CS_SUCCEED)) {
+	    warn("cs_loc_alloc failed");
+	    return 0;
+	}
+	if (cs_locale( context, CS_SET, imp_dbh->locale, CS_LC_ALL, (CS_CHAR*)NULL,
+		       CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) 
+	{
+	    warn("cs_locale(CS_LC_ALL) failed");
+	    return 0;
+	}
+	if(imp_dbh->language[0] != 0) {
+	    if(DBIS->debug >= 2)
+		PerlIO_printf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_LANG,%s)\n", imp_dbh->language);
+	    if (cs_locale( context, CS_SET, imp_dbh->locale, CS_SYB_LANG, 
+			   (CS_CHAR*)imp_dbh->language, CS_NULLTERM, 
+			   (CS_INT*)NULL) != CS_SUCCEED)
+	    {
+		warn("cs_locale(CS_SYB_LANG, %s) failed", imp_dbh->language);
+		return 0;
+	    }
+	}
+	if(imp_dbh->charset[0] != 0) {
+	    if(DBIS->debug >= 2)
+		PerlIO_printf(DBILOGFP, "    syb_db_login() -> cs_locale(CS_SYB_CHARSET,%s)\n", imp_dbh->charset);
+	    if (cs_locale( context, CS_SET, imp_dbh->locale, CS_SYB_CHARSET, 
+			   (CS_CHAR*)imp_dbh->charset, CS_NULLTERM, 
+			   (CS_INT*)NULL) != CS_SUCCEED)
+	    {
+		warn("cs_locale(CS_SYB_CHARSET, %s) failed", imp_dbh->charset);
+		return 0;
+	    }
+	}
+
+	if(cs_dt_info(context, CS_SET, imp_dbh->locale, CS_DT_CONVFMT, CS_UNUSED, 
+		      (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED)
+	    warn("cs_dt_info() failed");
+
+    } else {
+	if(DBIS->debug >= 2)
+	    PerlIO_printf(DBILOGFP, "    syb_db_login() -> using global CS_LOCALE data\n");
+    }
+#endif
 
     if((retcode = ct_con_alloc(context, &connection)) != CS_SUCCEED) {
 	warn("ct_con_alloc failed");
 	return 0;
     }
 
-    if (ct_con_props( connection, CS_SET, CS_LOC_PROP, 
-		      (CS_VOID*)imp_dbh->locale,
-		      CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
-    {
-	warn("ct_con_props(CS_LOC_PROP) failed");
-	return 0;
+    if (imp_dbh->locale) {
+	if(ct_con_props( connection, CS_SET, CS_LOC_PROP, 
+			 (CS_VOID*)imp_dbh->locale,
+			 CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) {
+	    
+	    warn("ct_con_props(CS_LOC_PROP) failed");
+	    return 0;
+	}
     }
 
     if((retcode = ct_con_props(connection, CS_SET, CS_USERDATA,
@@ -1496,7 +1590,7 @@ int syb_db_date_fmt(dbh, imp_dbh, fmt)
 	warn("Invalid format %s in _date_fmt", fmt);
 	return 0;
     }
-    if(cs_dt_info(context, CS_SET, imp_dbh->locale, CS_DT_CONVFMT, CS_UNUSED, 
+    if(cs_dt_info(context, CS_SET, LOCALE(imp_dbh), CS_DT_CONVFMT, CS_UNUSED, 
 		  (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED) {
 	warn("cs_dt_info() failed");
 	
@@ -1520,7 +1614,7 @@ static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt)
 	return 1;
     }
 
-    if(cs_dt_info(context, CS_GET, imp_dbh->locale, CS_DT_CONVFMT, CS_UNUSED, 
+    if(cs_dt_info(context, CS_GET, LOCALE(imp_dbh), CS_DT_CONVFMT, CS_UNUSED, 
 		  (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED) {
 	warn("cs_dt_info() failed");
 	
@@ -2491,16 +2585,18 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    return retval;
     }
 
-
+#if 0
     if(imp_dbh->sql != NULL)
         safefree(imp_dbh->sql);
     imp_dbh->sql = (char*)safemalloc(strlen(statement)+1);
     strcpy(imp_dbh->sql,statement);
+#endif
 
     if(imp_sth->statement != NULL)
 	safefree(imp_sth->statement);
     imp_sth->statement = NULL;
     dbd_preparse(imp_sth, statement);
+    imp_dbh->sql = imp_sth->statement;
 	
     if((int)DBIc_NUM_PARAMS(imp_sth)) {
 	/* regular dynamic sql */
@@ -2549,7 +2645,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_sth->doProcStatus = imp_dbh->doProcStatus;
 
     DBIc_on(imp_sth, DBIcf_IMPSET);
-    DBIc_ACTIVE_on(imp_sth);
+/*    DBIc_ACTIVE_on(imp_sth); */
 
     return 1;
 }
@@ -2690,7 +2786,7 @@ describe(imp_sth, restype)
 	imp_sth->coldata[i].realType = imp_sth->datafmt[i].datatype;
 	imp_sth->coldata[i].realLength = imp_sth->datafmt[i].maxlength;
 
-	imp_sth->datafmt[i].locale = imp_dbh->locale;
+	imp_sth->datafmt[i].locale = LOCALE(imp_dbh);
 
 	switch(imp_sth->datafmt[i].datatype) 
 	{
@@ -3145,7 +3241,7 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 	      case CS_NUMERIC_TYPE:
 	      case CS_DECIMAL_TYPE:
 		if(_convert(&imp_sth->coldata[i].value.num,  
-			    imp_sth->coldata[i].ptr, imp_dbh->locale, 
+			    imp_sth->coldata[i].ptr, LOCALE(imp_dbh), 
 			    &phs->datafmt, &vlen) != CS_SUCCEED) {
 		  /* If the error handler returns CS_FAIL, then FAIL this
 		     row! */
@@ -3180,7 +3276,7 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 		    alloc_datatype(phs->datafmt.datatype, &imp_sth->coldata[i].v_alloc);
 		}
 		if(_convert(imp_sth->coldata[i].value.p,  
-			    imp_sth->coldata[i].ptr, imp_dbh->locale, 
+			    imp_sth->coldata[i].ptr, LOCALE(imp_dbh), 
 			    &phs->datafmt, &vlen) != CS_SUCCEED) {
 		  char msg[255];
 		  /* If the error handler returns CS_FAIL, then FAIL this
@@ -3188,7 +3284,7 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 #if !defined(USE_CSLIB_CB)
 		  sprintf(msg, 
 			  "cs_convert failed: column %d: (_convert(%s, %d))", 
-			  i + 1, imp_sth->coldata[i].ptr, 
+			  i + 1, (char *)imp_sth->coldata[i].ptr, 
 			  phs->datafmt.datatype);
 		  ret = get_cs_msg(context, con, msg, sth, imp_sth);
 		  if(ret == CS_FAIL)
@@ -3484,7 +3580,7 @@ syb_st_fetch(sth, imp_sth)
 		    len = date2str(&imp_sth->coldata[i].value.dt, 
 				   &imp_sth->datafmt[i],
 				   buff, DATE_BUFF_LEN,
-				   imp_dbh->dateFmt, imp_dbh->locale);
+				   imp_dbh->dateFmt, LOCALE(imp_dbh));
 		    sv_setpvn(sv, buff, len);
 		    break;
 		  default:
@@ -3708,6 +3804,7 @@ void     syb_st_destroy(sth, imp_sth)
 	PerlIO_printf(DBILOGFP, "    syb_st_destroy: called on %x...\n", imp_sth);
 
     if (PL_dirty) {
+	DBIc_IMPSET_off(imp_sth);	/* let DBI know we've done it	*/
 	if (DBIS->debug >= 2)
 	    PerlIO_printf(DBILOGFP, "    syb_st_destroy: dirty set, skipping\n");
 	return;
@@ -3726,6 +3823,7 @@ void     syb_st_destroy(sth, imp_sth)
 	}
 	safefree(imp_sth->statement);
 	imp_sth->statement = NULL;
+	imp_dbh->sql       = NULL;
     }
 
     cleanUp(imp_sth);
@@ -4187,7 +4285,7 @@ date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 	dstfmt.locale    = locale;
 	cs_convert(context, srcfmt, dt, &dstfmt, buff, &len);
 
-	return len;
+	return len - 1;
     } else {
 	CS_DATEREC rec;
 	cs_dt_crack(context, CS_DATETIME_TYPE, dt, &rec);
@@ -4445,7 +4543,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	    break;
 	  case CS_NUMERIC_TYPE:
 	  case CS_DECIMAL_TYPE:
-	    n_value = to_numeric(phs->sv_buf, imp_dbh->locale, &phs->datafmt,
+	    n_value = to_numeric(phs->sv_buf, LOCALE(imp_dbh), &phs->datafmt,
 				 imp_sth->type);
 	    phs->datafmt.datatype = CS_NUMERIC_TYPE;
 	    value = &n_value;
@@ -4453,7 +4551,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	    break;
 	  case CS_MONEY_TYPE:
 	  case CS_MONEY4_TYPE:
-	    m_value = to_money(phs->sv_buf, imp_dbh->locale);
+	    m_value = to_money(phs->sv_buf, LOCALE(imp_dbh));
 	    phs->datafmt.datatype = CS_MONEY_TYPE;
 	    value = &m_value;
 	    value_len = sizeof(m_value);

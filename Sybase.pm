@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.76 2004/10/07 17:56:55 mpeppler Exp $
+# $Id: Sybase.pm,v 1.79 2004/11/25 13:34:58 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04_11';
-    my $Revision = substr(q$Revision: 1.76 $, 10);
+    $VERSION = '1.04_14';
+    my $Revision = substr(q$Revision: 1.79 $, 10);
 
     require_version DBI 1.30;
 
@@ -51,7 +51,7 @@
 	    'Attribution' => 'Sybase DBD by Michael Peppler',
 	    });
 
-	if($DBI::VERSION >= 1.34 && !$DBD::Sybase::init_done) {
+	if($DBI::VERSION >= 1.37 && !$DBD::Sybase::init_done) {
 	    DBD::Sybase::db->install_method('syb_nsql');
 	    DBD::Sybase::db->install_method('syb_date_fmt');
 	    DBD::Sybase::st->install_method('syb_ct_get_data');
@@ -91,15 +91,13 @@
 	    'CURRENT_USER' => $user,
 	    });
 
-	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) or return undef;
+	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) 
+		or return undef;
 
 	# OK - let us see what sort of server we're connected to. We
 	# need this because some of the SQL commands that we need to send
 	# to the server depend on this information.
-    {
 	
-	# local $this->{AutoCommit} = 1; #commented out - see bug #551.
-
         # Attributes that are passed in only get set *after* this routine
         # exits (i.e. when connect() returns).
         # So we need to set any syb_xxx attributes here:
@@ -122,9 +120,8 @@
 		}
 	    }
 	}
-    }
 
-	$this;
+	return $this;
     }
 
     sub data_sources {
@@ -207,12 +204,13 @@
 	$sth->execute(@params) or return undef;
 	return undef if $sth->err;
 	if(defined($sth->{syb_more_results})) {
-	    do {
+	    {
 		while(my $dat = $sth->fetch) {
 		    return undef if $sth->err;
 		    # XXX do something intelligent here...
 		}
-	    } while($sth->{syb_more_results});
+		redo if $sth->{syb_more_results};
+	    }
 	}
 	my $rows = $sth->rows;
 
@@ -440,7 +438,7 @@
 	    eval { 
 		$sth->execute || die $sth->errstr; 
 #		$sth->execute;
-		do {
+		{
 		    if ( $DBD::Sybase::syb_nsql_nostatus &&
 			 $sth->{syb_result_type} == &CS_STATUS_RESULT ) {
 			while ( $data = $sth->fetchrow_arrayref ) {
@@ -482,7 +480,8 @@
 		    
 		    die $sth->errstr if($sth->err);
 		    
-		} while($sth->{'syb_more_results'});
+		    redo if $sth->{syb_more_results};
+		}
 	    };
 	    # If $@ is set then something failed in the eval{} call above.
 	    if($@) {
@@ -538,7 +537,7 @@
 	my @results;
 	my $status;
 
-	do {
+	{
 	    while(my $d = $sth->fetch) {
 		# The tie() doesn't work here, so call the FETCH method
 		# directly....
@@ -548,7 +547,8 @@
 		   $status = $d->[0];
 	       }
 	    }
-	} while($sth->FETCH('syb_more_results'));
+	    redo if $sth->FETCH('syb_more_results');
+	}
 
 	# XXX What to do if $status != 0???
 	
@@ -563,7 +563,7 @@
 
 	$sth->execute || return undef;
 
-	do {
+	{
 	    while(my $d = $sth->fetch) {
 		# The tie() doesn't work here, so call the FETCH method
 		# directly....
@@ -571,7 +571,8 @@
 		   $status = $d->[0];
 	       }
 	    }
-	} while($sth->FETCH('syb_more_results'));
+	    redo if $sth->FETCH('syb_more_results');
+	}
 
 	# XXX What to do if $status != 0???
 	
@@ -868,11 +869,13 @@ need to re-start the C<fetch()> loop.
 To make sure all results are fetched, the basic C<fetch> loop can be 
 written like this:
 
-     do {
+     {
          while($d = $sth->fetch) {
             ... do something with the data
          }
-     } while($sth->{syb_more_results});
+
+         redo if $sth->{syb_more_results};
+     }
 
 You can get the type of the current result set with 
 $sth->{syb_result_type}. This returns a numerical value, as defined in 
@@ -1337,14 +1340,16 @@ The more generic way looks like this:
    $sth = $dbh->prepare("declare \@id_value int, \@id_name
       exec my_proc @name = 'a string', @number = 1234, @id = @id_value OUTPUT, @out_name = @id_name OUTPUT");
    $sth->execute;
-   do {
+   {
       while($d = $sth->fetch) {
          if($sth->{syb_result_type} == 4042) { # it's a PARAM result
             $id_value = $d->[0];
             $id_name  = $d->[1];
          }
       }
-   } while($sth->{syb_more_results});
+
+      redo if $sth->{syb_more_results};
+   }
 
 So the OUTPUT params are returned as one row in a special result set.
 
