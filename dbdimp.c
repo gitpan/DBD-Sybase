@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.20 1999/10/01 17:29:21 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.21 2000/03/24 04:44:04 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -1466,6 +1466,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     char *statement;
     SV *attribs;
 {
+    dTHR;
     D_imp_dbh_from_sth;
     CS_RETCODE ret;
 
@@ -1483,9 +1484,10 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	}
     }
 
-    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
+/*    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
 	if(syb_db_opentran(NULL, imp_dbh) == 0)
-	    return 0;
+	return 0; 
+*/
 
 
     strncpy(imp_dbh->sql, statement, MAX_SQL_SIZE);
@@ -1834,7 +1836,7 @@ st_next_result(sth, imp_sth)
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "ct_execute() final retcode = %d\n", retcode);
   Done:
-    if(failFlag)
+    if(failFlag || retcode == CS_FAIL)
 	return CS_CMD_FAIL;
 
     imp_sth->lastResType = restype;
@@ -1853,6 +1855,10 @@ syb_st_execute(sth, imp_sth)
 
     imp_dbh->lasterr = 0;
     imp_dbh->lastsev = 0;
+
+    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
+	if(syb_db_opentran(NULL, imp_dbh) == 0)
+	    return 0; 
 
     if(!imp_sth->dyn_execed) {
 	imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? 
@@ -1892,6 +1898,10 @@ syb_st_execute(sth, imp_sth)
     /* The lasterr/lastsev is a hack to work around Sybase OpenClient, which
        does NOT return CS_CMD_FAIL for constraint errors when inserting/updating
        data using ?-style placeholders. */
+
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_st_execute() -> lasterr = %d, lastsev = %d\n", imp_dbh->lasterr, imp_dbh->lastsev);
+
        
     if(restype == CS_CMD_FAIL || (imp_dbh->lasterr != 0 && imp_dbh->lastsev > 10))
 	return -2;
@@ -2476,6 +2486,7 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     } else {      /* it's null but point to buffer incase it's an out var */
         phs->sv_buf = SvPVX(phs->sv);
         value_len   = 0;
+	value       = NULL;
     }
     phs->sv_type = SvTYPE(phs->sv);     /* part of mutation check       */
     phs->maxlen  = SvLEN(phs->sv)-1;    /* avail buffer space   */

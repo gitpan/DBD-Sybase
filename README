@@ -1,4 +1,4 @@
-$Id: README,v 1.12 1999/09/07 20:44:12 mpeppler Exp $
+$Id: README,v 1.13 2000/03/24 04:45:10 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -32,55 +32,62 @@ man page for details.
 
 Recent changes:
 
-Release 0.19
+Release 0.22
 
-	Setting chained/non-chained mode was still broken. <sigh>
-	syb_flush_finish mode didn't quite work right either.
+	Bug Fixes:
 
-Release 0.18
+	271: execute() does not restart a transaction after a rollback
+             or commit when running multiple execute() calls for the 
+	     same statement handle.
+	294: SEGV on executing a prepared statement with undef values.
+	295: SEGV due to printf w/ null pointer
+	299: Missing dTHR in syb_st_prepare().
 
-	Add $h->{syb_chained_txn} attribute to switch between CHAINED
-	transactions and explicit named transactions for AutoCommit=0
-	mode. The default is for syb_chained_txn to be off (ie 0.13 behaviour).
-	Fixed typo in syb_db_commit() to actually commit instead of doing
-	a rollback.
-	Added an autocommit.t test (which still needs some work).
-	Disable opening new connection for secondary $sth handles off of a
-	single $dbh handle when AutoCommit == 0.
 
-Release 0.17
+Release 0.21
 
-	Fix AutoCommit = 0 problems introduced with 0.15 for MS-SQL or older
-	Sybase server (ie TDS 4.x protocol connections).
-	Add syb_dynamic_supported $dbh attribute to check whether the
-	connection supports ?-style placeholders.
+	Added constant() function, so that if DBD::Sybase is use'd you 
+	can access some CS_xxx_RESULT constants.
+	Added $sth->func('syb_output_params') to allow for easier
+	retrieval of stored proc OUTPUT parameters.
+	Added syb_do_proc_status database attribute to allow $sth->execute
+	to handle stored procedure return status directly, and to fail if
+	the stored proc has a non-0 return status. This should also fix 
+	bug 255.
+	Errors with severity 10 or below are not stored in $DBI::err 
+	anymore. Use $dbh->{syb_err_handler} to get at those warning
+	messages.
+	Added t/fail.t test script to better test failure modes.
+	Setting AutoCommit on a $dbh with active statement handles is now 
+	a fatal error.
 
-Release 0.16
+	Bug Fixes:
 
-	Added code to define PL_xxx symbols for pre 5.005 perls.
-	New syb_flush_finish attribute (contributed by Steve Miller).
-	Patch to Makefile.PL for VMS systems.
-	Better library detection code in Makefile.PL.
+	255: Memory leak for prepared statements that are not executed.
+	264: make test fails when building DBD::Sybase against
+	     OpenClient 10.x.
+	266: make test fails when building DBD::Sybase with perl 5.004_04
+	     or earlier.
+	268: $sth->execute(x,y,z) (ie executing a prepare'd statment that
+	     has ?-style placeholders) does not return undef if a
+	     constraint violation occurs on the insert/update/delete.
 
-Release 0.15
 
-	Added an error handler callback which can intercept error messages
-	and provide ad-hoc handling of error situations.
-	In AutoCommit == 0 mode, use CS_OPT_CHAINXACTS mode on the 
-	server instead of issuing explicit transactions.
-	$dbh->LongReadLen and LongTruncOK now work.
-	First cut at the type_info() and type_info_all() methods.
-	perl Makefile.PL now attempts to discover the libraries directly
-	based on what it finds in $SYBASE/lib.
+Release 0.20
 
-Release 0.14
-
-	Added a 'timeout' connection attribute (contributed by Tom May) 
-	to handle timeout errors during normal processing.
-	SQL PRINT statements are now handled by a warn() call (instead
-	a printf() call) so that they can be caught by a __WARN__ handler.
-        Make sure $dbh->do() returns immediately when an error is encountered.
-	Include dbd-sybase.pod (Tim Bunce's Driver Summary for DBD::Sybase).
+	Fix code to allow prepare, execute, execute, execute... on 
+	statements that don't include ?-style placeholders.
+	Fix LENGTH/PRECISION/SCALE $sth attributes to be closer to the
+	DBI spec.
+	Fix core dump problem when binding undef values and having 
+	trace >= 2.
+	Add syb_quoted_identifier connection/database handle attribute.
+	Add syb_oc_version read-only database handle attribute, returns the 
+	Sybase library version that this binary is currently using.
+	Added the syb_rowcount $dbh attribute.
+	Added $sth->cancel().
+	Call the syb_err_handler (if one is defined) for client-side
+	errors.
 
 
 
@@ -159,6 +166,12 @@ directories will be searched by default.
 
 The regression tests are minimal at the moment so don't necessarily
 believe all is fine if the tests succeed...
+
+NOTE: t/fail.t will *fail* on test #8 if you are connecting to 
+      an 11.0.3.3 server. This is a bug in the server, and not something
+      that I can do anything about, unfortunately. It's a fairly
+      obscure constraint violation condition - read the code if
+      you are interested.
 
 I have a simple bug tracking database at http://gw.peppler.org/cgi-bin/bug.cgi
 You can use it to check for known problems, and to report new ones. Keep

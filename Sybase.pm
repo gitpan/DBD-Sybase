@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.21 1999/10/01 17:30:59 mpeppler Exp $
+# $Id: Sybase.pm,v 1.22 2000/03/24 04:44:49 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
@@ -22,8 +22,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.21';
-    my $Revision = substr(q$Revision: 1.21 $, 10);
+    $VERSION = '0.22';
+    my $Revision = substr(q$Revision: 1.22 $, 10);
 
     require_version DBI 1.02;
 
@@ -926,9 +926,13 @@ There is also a performance issue: OpenClient creates stored procedures in
 tempdb for each prepare() call that includes ? placeholders. Creating
 these objects requires updating system tables in the tempdb database, and
 can therefore create a performance hotspot if a lot of prepare() statements
-from multiple clients are executed simultaneously (I have heard that
-Sybase 11.9.x corrects this hotspot problem.) In general it is better
-if your application is going to run against Sybase to write ad-hoc
+from multiple clients are executed simultaneously. This problem
+has been corrected for Sybase 11.9.x and later servers, as they create
+"lightweight" temporary stored procs which are held in the server memory
+cache and don't affect the system tables at all. 
+
+In general however I find that if your application is going to run 
+against Sybase it is better to write ad-hoc
 stored procedures rather than use the ? placeholders in embedded SQL.
 
 It is not possible to retrieve the last I<IDENTITY> value
