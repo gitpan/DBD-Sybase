@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.10 1999/05/23 18:27:28 mpeppler Exp $
+# $Id: Makefile.PL,v 1.11 1999/05/31 21:38:41 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -162,7 +162,7 @@ sub checkLib {
     my $dir = shift;
 
     opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
-    my @files = grep(/libct/, readdir(DIR));
+    my @files = grep(/libct/i, readdir(DIR));
     closedir(DIR);
 
     scalar(@files);

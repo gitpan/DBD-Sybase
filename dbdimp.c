@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.15 1999/05/23 18:28:31 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.16 1999/05/31 21:39:15 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999  Michael Peppler
 
@@ -468,6 +468,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->showSql       = 0;
     imp_dbh->showEed       = 0;
     imp_dbh->flushFinish   = 0;
+    imp_dbh->doRealTran    = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -699,6 +700,19 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     if(imp_dbh->database[0])
 	syb_db_use(imp_dbh, connection);
 
+    if(!imp_dbh->doRealTran) {
+	CS_BOOL value;
+	if(DBIc_is(imp_dbh, DBIcf_AutoCommit))
+	    value = CS_FALSE;
+	else 
+	    value = CS_TRUE;
+
+	retcode = ct_options(connection, CS_SET, CS_OPT_CHAINXACTS, 
+			     &value, CS_UNUSED, NULL);
+	if(retcode == CS_FAIL)
+	    imp_dbh->doRealTran = 1;
+    }
+
     return connection;
 }
 
@@ -786,13 +800,20 @@ int      syb_db_commit(dbh, imp_dbh)
     CS_RETCODE  retcode;
     int         failFlag = 0;
 
+    if(imp_dbh->doRealTran && !imp_dbh->inTransaction)
+	return 1;
+
+
     if(DBIc_is(imp_dbh, DBIcf_AutoCommit)) {
 	warn("commit ineffective with AutoCommit");
 	return 1;
     }
 
     cmd = syb_alloc_cmd(imp_dbh->connection);
-    strcpy(buff, "\nCOMMIT TRAN\n");
+    if(imp_dbh->doRealTran)
+	sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
+    else
+	strcpy(buff, "\nROLLBACK TRAN\n");
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_commit() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -830,13 +851,19 @@ int      syb_db_rollback(dbh, imp_dbh)
     CS_RETCODE  retcode;
     int         failFlag = 0;
 
+    if(imp_dbh->doRealTran && !imp_dbh->inTransaction)
+	return 1;
+
     if(DBIc_is(imp_dbh, DBIcf_AutoCommit)) {
 	warn("rollback ineffective with AutoCommit");
 	return 1;
     }
 
     cmd = syb_alloc_cmd(imp_dbh->connection);
-    strcpy(buff, "\nROLLBACK TRAN\n");
+    if(imp_dbh->doRealTran)
+	sprintf(buff, "\nROLLBACK TRAN %s\n", imp_dbh->tranName);
+    else
+	strcpy(buff, "\nROLLBACK TRAN\n");
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_db_rollback() -> ct_command(%s)\n", buff);
     retcode = ct_command(cmd, CS_LANG_CMD, buff,
@@ -861,6 +888,52 @@ int      syb_db_rollback(dbh, imp_dbh)
 
     ct_cmd_drop(cmd);
     imp_dbh->inTransaction = 0;
+    return !failFlag;
+}
+
+static int syb_db_opentran(dbh, imp_dbh)
+    SV *dbh;
+    imp_dbh_t *imp_dbh;
+{
+    CS_COMMAND *cmd;
+    char buff[128];
+    CS_INT      restype;
+    CS_RETCODE  retcode;
+    int         failFlag = 0;
+
+    if(DBIc_is(imp_dbh, DBIcf_AutoCommit) || imp_dbh->inTransaction)
+	return 1;
+
+    cmd = syb_alloc_cmd(imp_dbh->connection);
+    sprintf(imp_dbh->tranName, "DBI%x", imp_dbh);
+    sprintf(buff, "\nBEGIN TRAN %s\n", imp_dbh->tranName);
+    retcode = ct_command(cmd, CS_LANG_CMD, buff,
+			 CS_NULLTERM, CS_UNUSED);
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_db_opentran() -> ct_command(%s) = %d\n", 
+		buff, retcode);
+    if(retcode != CS_SUCCEED) 
+	return 0;
+    retcode = ct_send(cmd);
+    if(dbis->debug >= 2)
+	fprintf(DBILOGFP, "    syb_db_opentran() -> ct_send() = %d\n",
+		retcode);
+
+    if(retcode != CS_SUCCEED)
+	return 0;
+
+    while((retcode = ct_results(cmd, &restype)) == CS_SUCCEED) {
+	if(dbis->debug >= 2)
+	    fprintf(DBILOGFP, "    syb_db_opentran() -> ct_results(%d) == %d\n",
+		    restype, retcode);
+
+	if(restype == CS_CMD_FAIL)
+	    failFlag = 1;
+    }
+
+    ct_cmd_drop(cmd);
+    if(!failFlag)
+	imp_dbh->inTransaction = 1;
     return !failFlag;
 }
 
@@ -920,25 +993,27 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if (kl == 10 && strEQ(key, "AutoCommit")) {
 	CS_BOOL    value;
 	CS_RETCODE ret;
-
 	on = SvTRUE(valuesv);
 	if(on) {
 	    /* Going from OFF to ON - so force a COMMIT on any open 
 	       transaction */
 	    syb_db_commit(dbh, imp_dbh);
-	    value = CS_FALSE;
-	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
-		       &value, CS_UNUSED, NULL);
+	    if(!imp_dbh->doRealTran) {
+		value = CS_FALSE;
+		ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+				 &value, CS_UNUSED, NULL);
+	    }
 	} else {
-	    value = CS_TRUE;
-	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
-		       &value, CS_UNUSED, NULL);
+	    if(!imp_dbh->doRealTran) {
+		value = CS_TRUE;
+		ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+				 &value, CS_UNUSED, NULL);
+	    }
 	}
-	if(ret != CS_SUCCEED) {
+	if(!imp_dbh->doRealTran && ret != CS_SUCCEED) {
 	    warn("Setting of CS_OPT_CHAINXACTS failed.");
 	    return FALSE;
 	}
-
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, SvTRUE(valuesv));
 	return TRUE;
     }
@@ -996,6 +1071,10 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	} else {
 	    imp_dbh->flushFinish = 0;
 	}
+	return TRUE;
+    }
+    if (kl == 21 && strEQ(key, "syb_dynamic_supported")) {
+	warn("'syb_dynamic_supported' is a read-only attribute");
 	return TRUE;
     }
     return FALSE;
@@ -1058,6 +1137,16 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	else
 	    retsv = newSViv(0);
     }
+    if (kl == 21 && strEQ(key, "syb_dynamic_supported")) {
+	CS_BOOL val;
+	CS_RETCODE ret = ct_capability(imp_dbh->connection, CS_GET, CS_CAP_REQUEST,
+			    CS_REQ_DYN, (CS_VOID*)&val);
+	if(ret != CS_SUCCEED || val == CS_FALSE)
+	    retsv = newSViv(0);
+	else
+	    retsv = newSViv(1);
+    }
+
     return retsv;
 }
 
@@ -1161,6 +1250,11 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	    return 0;
 	}
     }
+
+    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
+	if(syb_db_opentran(NULL, imp_dbh) == 0)
+	    return 0;
+
 
     imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? imp_sth->connection :
 				 imp_dbh->connection);

@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.8 1999/05/23 18:26:23 mpeppler Exp $
+   $Id: dbdimp.h,v 1.9 1999/05/31 21:39:27 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -50,7 +50,8 @@ struct imp_dbh_st {
     CS_CONNECTION *connection;
     CS_LOCALE     *locale;
     char      tranName[32];
-    int       inTransaction;   
+    int       inTransaction;
+    int       doRealTran;
 
     char      uid[32];
     char      pwd[32];

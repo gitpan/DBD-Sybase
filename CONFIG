@@ -1,9 +1,13 @@
-# $Id: CONFIG,v 1.6 1999/05/16 18:28:42 mpeppler Exp $
-# Configuration file for Sybperl
+# $Id: CONFIG,v 1.7 1999/05/31 21:38:15 mpeppler Exp $
+# Configuration file for DBD::Sybase.
+#
+# The Makefile.PL file attempts to set reasonable defaults for the
+# variables in this file.
 #
 # Where is the Sybase directory on your system (include files &
 # libraries are expected to be found at SYBASE/include & SYBASE/lib
-SYBASE=/opt/sybase
+# If not set, uses the SYBASE environment variable.
+SYBASE=
 
 # Additional libraries.
 # Some systems require -lnsl or -lBSD.
@@ -16,7 +20,9 @@ SYBASE=/opt/sybase
 # Linux needs -linsck
 # See the Sybase OpenClient Supplement for your OS/Hardware
 # combination.
-EXTRA_LIBS=-linsck
+# If not set, will attempt to determine which libraries are needed by scanning the
+# $SYBASE/lib directory.
+EXTRA_LIBS=
 
 # DBI_INCLUDE
 # DBD::Sybase needs access to some C include files that are provided

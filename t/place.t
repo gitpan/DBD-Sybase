@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: place.t,v 1.2 1998/05/20 22:39:01 mpeppler Exp $
+# $Id: place.t,v 1.3 1999/05/31 21:34:03 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -40,6 +40,16 @@ my $dbh = DBI->connect("dbi:Sybase:server=$Srv", $Uid, $Pwd, {PrintError => 0});
 
 die "Unable for connect to $Srv: $DBI::errstr"
     unless $dbh;
+
+if(!$dbh->{syb_dynamic_supported}) {
+    print STDERR "?-style placeholders aren't supported with this SQL Server.\n";
+    my $i;
+    for($i = 2; $i <= 11; ++$i) {
+	print "ok $i\n";
+    }
+    $dbh->disconnect;
+    exit(0);
+}
 
 my $rc;
 

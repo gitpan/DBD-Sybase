@@ -1,4 +1,4 @@
-$Id: README,v 1.8 1999/05/17 05:57:21 mpeppler Exp $
+$Id: README,v 1.9 1999/05/31 21:38:29 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -31,6 +31,20 @@ there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
 Recent changes:
+
+Release 0.17
+
+	Fix AutoCommit = 0 problems introduced with 0.15 for MS-SQL or older
+	Sybase server (ie TDS 4.x protocol connections).
+	Add syb_dynamic_supported $dbh attribute to check whether the connection
+	supports ?-style placeholders.
+
+Release 0.16
+
+	Added code to define PL_xxx symbols for pre 5.005 perls.
+	New syb_flush_finish attribute (contributed by Steve Miller).
+	Patch to Makefile.PL for VMS systems.
+	Better library detection code in Makefile.PL.
 
 Release 0.15
 
@@ -88,6 +102,9 @@ are needed for the build.
 
 	LINKTYPE. Uncomment and set to 'static' if you want to build
 	DBD::Sybase statically (ie always included in a new perl binary).
+
+Edit PWD, and set the user, password and server that you want to use for the 
+'make test'.
 
 Run perl Makefile.PL, make, make test.
 

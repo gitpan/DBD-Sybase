@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.16 1999/05/23 18:27:56 mpeppler Exp $
+# $Id: Sybase.pm,v 1.17 1999/05/31 21:38:46 mpeppler Exp $
 
-# Copyright (c) 1996, 1997, 1998   Michael Peppler
+# Copyright (c) 1996,1997,1998,1999   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file,
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.16';
-    my $Revision = substr(q$Revision: 1.16 $, 10);
+    $VERSION = '0.17';
+    my $Revision = substr(q$Revision: 1.17 $, 10);
 
     require_version DBI 1.02;
 
@@ -543,6 +543,12 @@ any results remaining for the current command by actually fetching them.
 The default behaviour is to issue a ct_cancel(CS_CANCEL_ALL), but this
 I<appears> to cause connections to hang or to fail in certain cases (although
 I've never witnessed this myself.)
+
+=item syb_dynamic_supported
+
+B<NEW> This is a read-only attribute that returns TRUE if the dataserver
+you are connected to supports ?-style placeholders. Typically placeholders are
+not supported when using DBD::Sybase to connect to a MS-SQL server.
 
 =back
 
