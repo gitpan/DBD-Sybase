@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.4 1998/10/28 22:08:53 mpeppler Exp $
+   $Id: dbdimp.h,v 1.5 1998/11/15 19:52:40 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -45,18 +45,32 @@ struct imp_drh_st {
 
 /* Define dbh implementor data structure */
 struct imp_dbh_st {
-   dbih_dbc_t com;		/* MUST be first element in structure	*/
+    dbih_dbc_t com;		/* MUST be first element in structure	*/
+    
+    CS_CONNECTION *connection;
+    CS_LOCALE     *locale;
+    char      tranName[32];
+    int       inTransaction;   
 
-   CS_CONNECTION *connection;
-   char      tranName[32];
-   int       inTransaction;   
+    char      uid[32];
+    char      pwd[32];
 
-   int       isDead;
+    char      server[64];
+    char      charset[64];
+    char      packetSize[64];
+    char      language[64];
+    char      ifile[255];
+/*      char      ofile[255]; */
+    char      loginTimeout[64];
+    char      scriptName[255];
+    char      hostname[255];
 
-   int       showEed;
-   int       showSql;
-   char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
-				   used for error reporting */
+    int       isDead;
+
+    int       showEed;
+    int       showSql;
+    char      sql[MAX_SQL_SIZE];	/* first 250 chars of the sql statement
+					   used for error reporting */
 };
 
 typedef struct phs_st {
@@ -80,6 +94,7 @@ typedef struct phs_st {
 struct imp_sth_st {
     dbih_stc_t com;		/* MUST be first element in structure	*/
 
+    CS_CONNECTION *connection;	/* set if this is a sub-connection */
     CS_COMMAND *cmd;
     ColData    *coldata;
     CS_DATAFMT *datafmt;
@@ -103,3 +118,5 @@ struct imp_sth_st {
     int  has_inout_params;
 };
 #define IMP_STH_EXECUTING	0x0001
+
+int syb_db_date_fmt _((SV *, imp_dbh_t *, char *));

@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.10 1998/10/28 22:08:33 mpeppler Exp $
+# $Id: Sybase.pm,v 1.11 1998/11/15 19:51:17 mpeppler Exp $
 
 # Copyright (c) 1996, 1997, 1998   Michael Peppler
 #
@@ -17,8 +17,8 @@
     use DynaLoader ();
     @ISA = qw(DynaLoader);
 
-    $VERSION = '0.10';
-    my $Revision = substr(q$Revision: 1.10 $, 10);
+    $VERSION = '0.11';
+    my $Revision = substr(q$Revision: 1.11 $, 10);
 
     require_version DBI 0.89;
 
@@ -261,6 +261,20 @@ server it is sometimes necessary to increase this value:
      $dbh = DBI->connect("dbi:Sybase:loginTimeout=240", # wait up to 4 minutes
 			 $user, $passwd);
 
+=item scriptName
+
+Specify the name for this connection that will be displayed in sp_who
+(ie in the sysprocesses table in the I<program_name> column).
+
+    $dbh->DBI->connect("dbi:Sybase:scriptName=myScript", $user, $password);
+
+=item hostname
+
+Specify the hostname that will be displayed by sp_who (and will be stored
+in the hostname column of sysprocesses)..
+
+    $dbh->DBI->connect("dbi:Sybase:hostname=kiruna", $user, $password);
+
 =back
 
 These different parameters (as well as the server name) can be strung
@@ -366,6 +380,69 @@ currently fetchable (normal select rows, output parameters, status results,\
 etc...).
 
 =back
+
+=head1 Controlling DATETIME output formats
+
+By default DBD::Sybase will return I<DATETIME> and I<SMALLDATETIME>
+columns in the I<Nov 15 1998 11:13AM> format. This can be changed
+via a special B<_date_fmt()> function that is accessed via the $dbh->func()
+method.
+
+The syntax is
+
+    $dbh->func($fmt, '_date_fmt');
+
+where $fmt is a string representing the format that you want to apply.
+
+The formats are based on Sybase's standard conversion routines. The following
+subset of available formats has been implemented:
+
+=over 4
+
+=item LONG
+
+Nov 15 1998 11:30:11:496AM
+
+=item SHORT
+
+Nov 15 1998 11:30AM
+
+=item DMY4_YYYY
+
+15 Nov 1998
+
+=item MDY1_YYYY
+
+11/15/1998
+
+=item DMY1_YYYY
+
+15/11/1998
+
+=item HMS
+
+11:30:11
+
+=back
+
+=head1 Multiple active statements on one $dbh
+
+It is now possible to open multiple active statements on a single database 
+handle. This is done by openeing a new physical connection in $dbh->prepare()
+if there is already an active statement handle for this $dbh.
+
+This feature has been implemented to improve compatibility with other
+drivers, but should not be used if you are coding directly to the 
+Sybase driver.
+
+B<WARNING>: This feature should be used with care. In particular, because
+the SQL statements executed on the second (and subsequent) statement
+handles are sent over a different physical connection DBD::Sybase
+cannot guarantee a complete rollback if you have B<AutoCommit> set to B<OFF>.
+
+A future version may make a better attempt at getting this particular 
+problem right.
+
 
 =head1 IMAGE and TEXT datatypes
 

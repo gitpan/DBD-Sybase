@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.9 1998/10/28 22:09:28 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.10 1998/11/15 19:52:20 mpeppler Exp $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -35,7 +35,8 @@ static CS_RETCODE clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
 static CS_RETCODE servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
 static CS_COMMAND *syb_alloc_cmd _((CS_CONNECTION*));
 static void dealloc_dynamic _((imp_sth_t *));
-static int map_types(int syb_type);
+static int map_types _((int));
+static CS_CONNECTION *syb_db_connect _((struct imp_dbh_st *));
 
 
 static CS_CONTEXT *context;
@@ -93,7 +94,8 @@ CS_SERVERMSG	*srvmsg;
     imp_dbh_t *imp_dbh = NULL;
     char buff[1024];
 
-    if(srvmsg->msgnumber == 5701)
+    if(srvmsg->msgnumber == 5701 || srvmsg->msgnumber == 5703 
+       || srvmsg->msgnumber == 5704)
 	return CS_SUCCEED;
 
     if((ct_con_props(connection, CS_GET, CS_USERDATA,
@@ -368,57 +370,80 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     char       *pwd;
 {
     dTHR;
-    CS_RETCODE     retcode;
-    CS_CONNECTION *connection = NULL;
-    CS_COMMAND    *cmd;
-    CS_LOCALE     *locale = NULL;
     int len;
-    char server[64];
-    char charset[64];
-    char packetSize[64];
-    char language[64];
-    char ifile[255];
-    char ofile[255];
-    char loginTimeout[64];
 
-    server[0]     = 0;
-    charset[0]    = 0;
-    packetSize[0] = 0;
-    language[0]   = 0;
-    ifile[0] = 0;
+    imp_dbh->server[0]     = 0;
+    imp_dbh->charset[0]    = 0;
+    imp_dbh->packetSize[0] = 0;
+    imp_dbh->language[0]   = 0;
+    imp_dbh->ifile[0]      = 0;
+    imp_dbh->loginTimeout[0] = 0;
+    
     
     if(strchr(dsn, '=')) {
-	extractFromDsn("server=", dsn, server, 64);
-	extractFromDsn("charset=", dsn, charset, 64);
-	extractFromDsn("packetSize=", dsn, packetSize, 64);
-	extractFromDsn("language=", dsn, language, 64);
-	extractFromDsn("interfaces=", dsn, ifile, 255);
-	extractFromDsn("loginTimeout=", dsn, loginTimeout, 64);
+	extractFromDsn("server=", dsn, imp_dbh->server, 64);
+	extractFromDsn("charset=", dsn, imp_dbh->charset, 64);
+	extractFromDsn("packetSize=", dsn, imp_dbh->packetSize, 64);
+	extractFromDsn("language=", dsn, imp_dbh->language, 64);
+	extractFromDsn("interfaces=", dsn, imp_dbh->ifile, 255);
+	extractFromDsn("loginTimeout=", dsn, imp_dbh->loginTimeout, 64);
+	extractFromDsn("scriptName=", dsn, imp_dbh->scriptName, 255);
+	extractFromDsn("hostname=", dsn, imp_dbh->hostname, 255);
     } else {
-	strcpy(server, dsn);
+	strcpy(imp_dbh->server, dsn);
     }
+
+    strcpy(imp_dbh->uid, uid);
+    strcpy(imp_dbh->pwd, pwd);
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
-    if(ifile[0]) {
+    imp_dbh->connection = syb_db_connect(imp_dbh);
+
+    /* AutoCommit is ON by default */
+    DBIc_set(imp_dbh,DBIcf_AutoCommit, 1);
+
+    DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
+    DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
+
+    DBH = imp_dbh;
+
+    return 1;
+}
+
+
+static CS_CONNECTION *syb_db_connect(imp_dbh)
+    struct imp_dbh_st *imp_dbh;
+{
+    dTHR;
+    CS_RETCODE     retcode;
+    CS_CONNECTION *connection = NULL;
+/*    CS_COMMAND    *cmd; */
+    CS_LOCALE     *locale = NULL;
+    char ofile[255];
+    int len;
+
+    if(imp_dbh->ifile[0]) {
 	if(dbis->debug >= 2)
-	    fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_IFILE,%s)\n", ifile);
+	    fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_IFILE,%s)\n",
+		    imp_dbh->ifile);
 	if((retcode = ct_config(context, CS_GET, CS_IFILE, ofile, 255, NULL))
 	   != CS_SUCCEED)
 	    warn("ct_config(CS_GET, CS_IFILE) failed");
 	if(retcode == CS_SUCCEED) {
-	    if((retcode = ct_config(context, CS_SET, CS_IFILE, ifile,
+	    if((retcode = ct_config(context, CS_SET, CS_IFILE, imp_dbh->ifile,
 				    CS_NULLTERM, NULL)) != CS_SUCCEED)
 	    {
-		warn("ct_config(CS_SET, CS_IFILE, %s) failed", ifile);
-		return 0;
+		warn("ct_config(CS_SET, CS_IFILE, %s) failed", imp_dbh->ifile);
+		return NULL;
 	    }
 	}
     }
-    if(loginTimeout[0]) {
-	int timeout = atoi(loginTimeout);
+    if(imp_dbh->loginTimeout[0]) {
+	int timeout = atoi(imp_dbh->loginTimeout);
 	if(timeout <= 0)
-	    timeout = 60;	/* set negative or 0 length timeout to default 60 seconds */
+	    timeout = 60;	/* set negative or 0 length timeout to 
+				   default 60 seconds */
 	if(dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_db_login() -> ct_config(CS_LOGIN_TIMEOUT,%d)\n", timeout);
 	if((retcode = ct_config(context, CS_SET, CS_LOGIN_TIMEOUT, &timeout,
@@ -426,45 +451,53 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	    warn("ct_config(CS_SET, CS_LOGIN_TIMEOUT) failed");
     }
 	
+    if(imp_dbh->locale == NULL) {
+	CS_INT type = CS_DATES_SHORT;
 
-    /* Set up the proper locale - to handle character sets, etc. */
-    if ((retcode = cs_loc_alloc( context, &locale ) != CS_SUCCEED)) {
-	warn("ct_loc_alloc failed");
-	return 0;
-    }
-    if (cs_locale( context, CS_SET, locale, CS_LC_ALL, (CS_CHAR*)NULL,
-		   CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) 
-    {
-	warn("cs_locale(CS_LC_ALL) failed");
-	return 0;
-    }
-    if(language[0] != 0) {
-	if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
-		       (CS_CHAR*)language, CS_NULLTERM, 
-		       (CS_INT*)NULL) != CS_SUCCEED)
-	{
-	    warn("cs_locale(CS_SYB_LANG, %s) failed", language);
+	/* Set up the proper locale - to handle character sets, etc. */
+	if ((retcode = cs_loc_alloc( context, &locale ) != CS_SUCCEED)) {
+	    warn("ct_loc_alloc failed");
 	    return 0;
 	}
-    }
-    if(charset[0] != 0) {
-	if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
-		       (CS_CHAR*)charset, CS_NULLTERM, 
-		       (CS_INT*)NULL) != CS_SUCCEED)
+	if (cs_locale( context, CS_SET, locale, CS_LC_ALL, (CS_CHAR*)NULL,
+		       CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) 
 	{
-	    warn("cs_locale(CS_SYB_CHARSET, %s) failed", charset);
+	    warn("cs_locale(CS_LC_ALL) failed");
 	    return 0;
 	}
+	if(imp_dbh->language[0] != 0) {
+	    if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
+			   (CS_CHAR*)imp_dbh->language, CS_NULLTERM, 
+			   (CS_INT*)NULL) != CS_SUCCEED)
+	    {
+		warn("cs_locale(CS_SYB_LANG, %s) failed", imp_dbh->language);
+		return 0;
+	    }
+	}
+	if(imp_dbh->charset[0] != 0) {
+	    if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
+			   (CS_CHAR*)imp_dbh->charset, CS_NULLTERM, 
+			   (CS_INT*)NULL) != CS_SUCCEED)
+	    {
+		warn("cs_locale(CS_SYB_CHARSET, %s) failed", imp_dbh->charset);
+		return 0;
+	    }
+	}
+
+	if(cs_dt_info(context, CS_SET, locale, CS_DT_CONVFMT, CS_UNUSED, 
+		      (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED)
+	    warn("cs_dt_info() failed");
+
+	imp_dbh->locale = locale;
     }
-
-
 
     if((retcode = ct_con_alloc(context, &connection)) != CS_SUCCEED) {
 	warn("ct_con_alloc failed");
 	return 0;
     }
   
-    if (ct_con_props( connection, CS_SET, CS_LOC_PROP, (CS_VOID*)locale,
+    if (ct_con_props( connection, CS_SET, CS_LOC_PROP, 
+		      (CS_VOID*)imp_dbh->locale,
 		      CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
     {
 	warn("ct_con_props(CS_LOC_PROP) failed");
@@ -478,8 +511,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	return 0;
     }
 
-    if (packetSize[0] != 0) {
-	int i = atoi(packetSize);
+    if (imp_dbh->packetSize[0] != 0) {
+	int i = atoi(imp_dbh->packetSize);
 	if (ct_con_props( connection, CS_SET, CS_PACKETSIZE, (CS_VOID*)&i,
 			  CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED)
 	{
@@ -488,18 +521,18 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
 	}
     }
 
-    if(retcode == CS_SUCCEED && uid && *uid) {
+    if(retcode == CS_SUCCEED && *imp_dbh->uid) {
 	if((retcode = ct_con_props(connection, CS_SET, CS_USERNAME, 
-				   uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
+				   imp_dbh->uid, CS_NULLTERM, NULL)) != CS_SUCCEED)
 	{
 	    warn("ct_con_props(CS_USERNAME) failed");
 	    return 0;
 	}
 	
     }
-    if(retcode == CS_SUCCEED && pwd && *pwd) {
+    if(retcode == CS_SUCCEED && *imp_dbh->pwd) {
 	if((retcode = ct_con_props(connection, CS_SET, CS_PASSWORD, 
-				   pwd, CS_NULLTERM, NULL)) != CS_SUCCEED)
+				   imp_dbh->pwd, CS_NULLTERM, NULL)) != CS_SUCCEED)
 	{
 	    warn("ct_con_props(CS_PASSWORD) failed");
 	    return 0;
@@ -508,35 +541,67 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     if(retcode == CS_SUCCEED)
     {
 	if((retcode = ct_con_props(connection, CS_SET, CS_APPNAME, 
+	    *imp_dbh->scriptName ? imp_dbh->scriptName :
 				   scriptName, CS_NULLTERM, NULL)) != CS_SUCCEED)
 	{
-	    warn("ct_con_props(CS_APPNAME, %s) failed", scriptName);
+	    warn("ct_con_props(CS_APPNAME, %s) failed", imp_dbh->scriptName);
 	    return 0;
+	}
+	if(*imp_dbh->hostname) {
+	    if((retcode = ct_con_props(connection, CS_SET, CS_HOSTNAME, 
+				       imp_dbh->hostname,
+				       CS_NULLTERM, NULL)) != CS_SUCCEED)
+	    {
+		warn("ct_con_props(CS_APPNAME, %s) failed", imp_dbh->scriptName);
+		return 0;
+	    }
 	}
     }
     if (retcode == CS_SUCCEED)
     {
-	len = (server == NULL || !*server) ? 0 : CS_NULLTERM;
-	if((retcode = ct_connect(connection, server, len)) != CS_SUCCEED) {
+	len = *imp_dbh->server == 0 ? 0 : CS_NULLTERM;
+	if((retcode = ct_connect(connection, imp_dbh->server, len)) != CS_SUCCEED) {
 	    cs_loc_drop(context, locale);
 	    return 0;
 	}
     }
-    if(ifile[0]) {
+    if(imp_dbh->ifile[0]) {
 	if((retcode = ct_config(context, CS_SET, CS_IFILE, ofile, CS_NULLTERM, NULL))
 	   != CS_SUCCEED)
 	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
     }
 
-    imp_dbh->connection = connection;
+    return connection;
+}
 
-    /* AutoCommit is ON by default */
-    DBIc_set(imp_dbh,DBIcf_AutoCommit, 1);
-
-    DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
-    DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
-
-    DBH = imp_dbh;
+int syb_db_date_fmt(dbh, imp_dbh, fmt)
+    SV *dbh;
+    imp_dbh_t *imp_dbh;
+    char *fmt;
+{
+    CS_INT type;
+    if(!strcmp(fmt, "LONG")) {
+	type = CS_DATES_LONG;
+    } else if(!strcmp(fmt, "SHORT")) {
+	type = CS_DATES_SHORT;
+    } else if(!strcmp(fmt, "DMY4_YYYY")) {
+	type = CS_DATES_DMY4_YYYY;
+    } else if(!strcmp(fmt, "MDY1_YYYY")) {
+	type = CS_DATES_MDY1_YYYY;
+    } else if(!strcmp(fmt, "DMY1_YYYY")) {
+	type = CS_DATES_DMY1_YYYY;
+    } else if(!strcmp(fmt, "HMS")) {
+	type = CS_DATES_HMS;
+    } else {
+	warn("Invalid format %s in _date_fmt", fmt);
+	return 0;
+    }
+    if(cs_dt_info(context, CS_SET, imp_dbh->locale, CS_DT_CONVFMT, CS_UNUSED, 
+		  (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED) {
+	warn("cs_dt_info() failed");
+	
+	return 0;
+    }
 
     return 1;
 }
@@ -706,6 +771,8 @@ int      syb_db_disconnect(dbh, imp_dbh)
 	if((retcode = ct_close(imp_dbh->connection, CS_FORCE_CLOSE)) != CS_SUCCEED)
 	    fprintf(DBILOGFP, "    syb_db_disconnect(): ct_close() failed\n");
     }
+    if((retcode = cs_loc_drop(context, imp_dbh->locale)) != CS_SUCCEED)
+	fprintf(DBILOGFP, "    syb_db_disconnect(): cs_loc_drop() failed\n");
     if((retcode = ct_con_drop(imp_dbh->connection)) != CS_SUCCEED)
 	fprintf(DBILOGFP, "    syb_db_disconnect(): ct_con_drop() failed\n");
 
@@ -902,11 +969,16 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 
     sv_setpv(DBIc_ERRSTR(imp_dbh), "");
 
+    if(DBIc_ACTIVE_KIDS(DBIc_PARENT_COM(imp_sth))) {
+	imp_sth->connection = syb_db_connect(imp_dbh);
+    }
+
     if(!DBIc_is(imp_dbh, DBIcf_AutoCommit))
 	if(syb_db_opentran(NULL, imp_dbh) == 0)
 	    return 0;
 
-    imp_sth->cmd = syb_alloc_cmd(imp_dbh->connection);
+    imp_sth->cmd = syb_alloc_cmd(imp_sth->connection ? imp_sth->connection :
+				 imp_dbh->connection);
 
     strncpy(imp_dbh->sql, statement, MAX_SQL_SIZE);
     imp_dbh->sql[MAX_SQL_SIZE - 1] = '\0';
@@ -1031,6 +1103,7 @@ describe(imp_sth, restype)
     imp_sth_t *imp_sth;
     int restype;
 {
+    D_imp_dbh_from_sth;
     CS_RETCODE retcode;
     int i;
     int numCols;
@@ -1100,6 +1173,9 @@ describe(imp_sth, restype)
 	}
 
 	imp_sth->coldata[i].realType = imp_sth->datafmt[i].datatype;
+
+	imp_sth->datafmt[i].locale = imp_dbh->locale;
+
 	switch(imp_sth->datafmt[i].datatype) 
 	{
 	  case CS_BIT_TYPE:
@@ -1229,7 +1305,8 @@ st_next_result(sth, imp_sth)
     return restype;
 }
 
-int      syb_st_execute(sth, imp_sth)
+int      
+syb_st_execute(sth, imp_sth)
     SV *sth;
     imp_sth_t *imp_sth;
 {
@@ -1387,10 +1464,14 @@ int      syb_st_finish(sth, imp_sth)
 {
     dTHR;
     D_imp_dbh_from_sth;
+    CS_CONNECTION *connection;
+
+    connection = imp_sth->connection ? imp_sth->connection : 
+	imp_dbh->connection;
 
     if (DBIc_ACTIVE(imp_sth)) {
-	if(ct_cancel(imp_dbh->connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
-	      ct_close(imp_dbh->connection, CS_FORCE_CLOSE);
+	if(ct_cancel(connection, NULL, CS_CANCEL_ALL) == CS_FAIL) {
+	      ct_close(connection, CS_FORCE_CLOSE);
 	      imp_dbh->isDead = 1;
 	}	    
     }
@@ -1465,6 +1546,8 @@ void     syb_st_destroy(sth, imp_sth)
     if(dbis->debug >= 2) {
 	fprintf(DBILOGFP, "    syb_st_destroy(): cmd dropped: %d\n", ret);
     }
+    if(imp_sth->connection)
+	ct_close(imp_sth->connection, CS_FORCE_CLOSE);
 
     DBIc_IMPSET_off(imp_sth);		/* let DBI know we've done it	*/
 }

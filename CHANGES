@@ -1,4 +1,15 @@
-$Id: CHANGES,v 1.8 1998/10/28 22:11:24 mpeppler Exp $
+$Id: CHANGES,v 1.9 1998/11/15 19:52:58 mpeppler Exp $
+
+Release 0.11
+
+	Adds support for multiple $sth for a single $dbh (this is done 
+	by openeing a new connection in prepare() if the previously
+	prepared statement is still active.
+	Add support for date formatting via $dbh->func($fmt,
+	'_date_fmt').
+	Added two new connect attributes: scriptName and
+	hostname. Setting these can help identify processes in the
+	Sybase sysprocesses table.
 
 Release 0.10
 
