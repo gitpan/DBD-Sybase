@@ -1,4 +1,4 @@
-/* $Id: Sybase.h,v 1.11 2004/08/04 08:51:37 mpeppler Exp $
+/* $Id: Sybase.h,v 1.12 2004/12/16 12:06:01 mpeppler Exp $
 
    Copyright (c) 1997 - 2004 Michael Peppler
 
@@ -9,7 +9,7 @@
 
 
 
-#define NEED_DBIXS_VERSION 8
+#define NEED_DBIXS_VERSION 93
 
 #include <DBIXS.h>		/* installed by the DBI module	*/
 #include "dbivport.h"

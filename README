@@ -1,4 +1,4 @@
-$Id: README,v 1.23 2004/01/07 23:38:42 mpeppler Exp $
+$Id: README,v 1.24 2004/12/19 09:58:06 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
@@ -54,6 +54,41 @@ latter if you use the FreeTDS libraries with DBD::Sybase).
 
 
 Recent changes:
+
+Release 1.05
+
+        BEHAVIOR CHANGE - $dbh->{LongReadLen} must now be called
+	before $dbh->prepare(). Previously you could call this after
+	the $dbh->prepare() but before the $sth->execute().
+
+        Install private statement handle methods for TEXT/IMAGE handling
+        to avoid $h->func() calls, and update documentation.
+        Implement experimental BLK API via prepare/execute loop.
+	Change default "AutoCommit" off mode from explicit transactions
+	to using the "chained" mode if it is available.
+	Add $sth->syb_describe() call, taken from Sybase::CTlib's 
+	ct_describe().
+	Add ISO8601 date/time format for output.
+	Fix $sth->finish() behavior when syb_flush_finish is turned on.
+	Changed do { } while($sth->{syb_more_results}); idiom to use
+	redo instead.
+	Better/more consistent handling of multiple sth on a single dbh,
+        and new test file.
+
+	Bugs Fixed:
+
+	580 - Binding binary/varbinary values to placeholders sometimes
+	      fails.
+	575 - Fails three tests under Tru-64.
+	577 - perl Makefile.PL fails if umask is 0.
+        578 - Better warning for calling $dbh->{LongReadLen} if $dbh is busy.
+        572 - Minor documentation update for bind_param().
+
+Release 1.04
+
+	Bugs Fixed:
+
+	566 - $sth->{NAME} fails right after prepare().
 
 Release 1.03
 
@@ -202,7 +237,7 @@ If the LANG or LC_ALL environment variable is set and points to an
 entry that does not exist in $SYBASE/locales/locales.dat (in the 
 [linux] section) then you may get a core dump. This is an
 OpenClient problem. 
-See http://www.mbay.net/~mpeppler/Linux-ASE-FAQ.html#q1.14 for
+See http://www.peppler.org/FAQ/linux.html#q1.14 for
 additional details.
 
 FreeTDS:
@@ -232,6 +267,7 @@ Comments, criticism, etc. welcome!
 
 Michael
 --
-Michael Peppler, Data Migrations, Inc.
-mpeppler@peppler.org - http://www.mbay.net/~mpeppler
+Michael Peppler
+mpeppler@peppler.org
+http://www.peppler.org/
 

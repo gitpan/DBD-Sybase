@@ -1,60 +1,56 @@
-#!/usr/local/bin/perl
+#!perl
 #
-# $Id: nsql.t,v 1.3 2004/03/16 23:35:31 mpeppler Exp $
-
-use lib 'blib/lib';
-use lib 'blib/arch';
+# $Id: nsql.t,v 1.4 2004/12/16 12:06:01 mpeppler Exp $
 
 use lib 't';
 use _test;
 
-use vars qw($Pwd $Uid $Srv);
+use strict;
 
-BEGIN {print "1..6\n";}
-END {print "not ok 1\n" unless $loaded;}
-use DBI;
-$loaded = 1;
-print "ok 1\n";
+use Test::More tests => 7; #qw(no_plan);
 
-#DBI->trace(2);
+use vars qw($Pwd $Uid $Srv $Db);
+
+BEGIN { use_ok('DBI');
+        use_ok('DBD::Sybase');}
 
 ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
 #DBI->trace(3);
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {syb_deadlock_retry=>10, syb_deadlock_verbose=>1});
 #exit;
-$dbh and print "ok 2\n"
-    or print "not ok 2\n";
+ok($dbh, 'Connect');
 
 my @d = $dbh->func("select * from sysusers", 'ARRAY', 'nsql');
+ok(@d >= 1, 'array');
 foreach (@d) {
     local $^W = 0;
     print "@$_\n";
 }
-print "ok 3\n";
+#print "ok 3\n";
 
 @d = $dbh->func("select * from sysusers", 'ARRAY', \&cb, 'nsql');
+ok(@d == 1, 'array 2');
 foreach (@d) {
-    print "@$_\n";
+    print "$_\n";
 }
-print "ok 4\n";
 
-if($DBI::VERSION >= 1.34) {
+SKIP: {
+    skip 'requires DBI 1.34', 2 unless $DBI::VERSION >= 1.34;
     @d = $dbh->syb_nsql("select * from sysusers", 'ARRAY');
+    ok(@d >= 1, 'syb_nsql 1');
     foreach (@d) {
 	local $^W = 0;
 	print "@$_\n";
     }
-    print "ok 5\n";
+#    print "ok 5\n";
 
     @d = $dbh->syb_nsql("select * from sysusers", 'ARRAY', \&cb);
+    ok(@d == 1, 'syb_nsql 2');
     foreach (@d) {
-	print "@$_\n";
+	print "$_\n";
     }
-    print "ok 6\n";
-} else {
-    print "ok 5 # skip\n";
-    print "ok 6 # skip\n";
+#    print "ok 6\n";
 }
 
 sub cb {

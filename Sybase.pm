@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.83 2004/12/15 07:37:55 mpeppler Exp $
+# $Id: Sybase.pm,v 1.85 2004/12/19 09:52:39 mpeppler Exp $
 
 # Copyright (c) 1996-2004   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.04_16';
-    my $Revision = substr(q$Revision: 1.83 $, 10);
+    $VERSION = '1.05';
+    my $Revision = substr(q$Revision: 1.85 $, 10);
 
     require_version DBI 1.30;
 
@@ -34,9 +34,9 @@
 
 
     $drh = undef;	# holds driver handle once initialised
-    $err = 0;		# The $DBI::err value
-    $errstr = '';
-    $sqlstate = "00000";
+ #   $err = 0;		# The $DBI::err value
+ #   $errstr = '';
+ #   $sqlstate = "00000";
 
     sub driver {
 	return $drh if $drh;
@@ -45,9 +45,9 @@
 	($drh) = DBI::_new_drh($class, {
 	    'Name' => 'Sybase',
 	    'Version' => $VERSION,
-	    'Err'     => \$DBD::Sybase::err,
-	    'Errstr'  => \$DBD::Sybase::errstr,
-	    'State'   => \$DBD::Sybase::sqlstate,
+#	    'Err'     => \$DBD::Sybase::err,
+#	    'Errstr'  => \$DBD::Sybase::errstr,
+#	    'State'   => \$DBD::Sybase::sqlstate,
 	    'Attribution' => 'Sybase DBD by Michael Peppler',
 	    });
 
@@ -93,33 +93,6 @@
 
 	DBD::Sybase::db::_login($this, $server, $user, $auth, $attr) 
 		or return undef;
-
-	# OK - let us see what sort of server we're connected to. We
-	# need this because some of the SQL commands that we need to send
-	# to the server depend on this information.
-
-        # Attributes that are passed in only get set *after* this routine
-        # exits (i.e. when connect() returns).
-        # So we need to set any syb_xxx attributes here:
-        foreach (grep(/^syb/, keys(%$attr))) {
-	    $this->{$_} = $attr->{$_};
-	}
-	
-	my $sth = $this->prepare("select \@\@version");
-	if($sth->execute) {
-	    while(my $row = $sth->fetch) {
-		if($row && ref($row)) {
-		    if($row->[0] =~ /microsoft/i) {
-			$this->{syb_server_version} = -1;
-			#warn "Connected to MS-SQL\n";
-		    } elsif($row->[0] =~ /adaptive server enterprise\/([\d\.]+)/i ||
-			    $row->[0] =~ /sql server\/([\d\.]+)/i) {
-			$this->{syb_server_version} = $1;
-			#warn "Connected to Sybase\n";
-		    }
-		}
-	    }
-	}
 
 	return $this;
     }
@@ -1145,6 +1118,22 @@ For example:
     Sybase Client-Library/11.1.1/P/Linux Intel/Linux 2.2.5 i586/1/OPT/Mon Jun  7 07:50:21 1999
 
 This is very useful information to have when reporting a problem.
+
+=item syb_server_version
+=item syb_server_version_string
+
+These two attributes return the Sybase server version, respectively
+version string, and can be used to turn server-specific functionality
+on or off.
+
+Example:
+
+    print "$dbh->{syb_server_version}\n$dbh->{syb_server_version_string}\n";
+
+prints
+
+    12.5.2
+    Adaptive Server Enterprise/12.5.2/EBF 12061 ESD#2/P/Linux Intel/Enterprise Linux/ase1252/1844/32-bit/OPT/Wed Aug 11 21:36:26 2004
 
 =item syb_failed_db_fatal (bool)
 

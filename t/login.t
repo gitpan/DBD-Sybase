@@ -1,6 +1,6 @@
-#!/usr/local/bin/perl
+#!perl
 #
-# $Id: login.t,v 1.2 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: login.t,v 1.3 2004/12/16 12:06:01 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -8,27 +8,27 @@ use lib 'blib/arch';
 use lib 't';
 use _test;
 
-use vars qw($Pwd $Uid);
+use strict;
 
-BEGIN {print "1..3\n";}
-END {print "not ok 1\n" unless $loaded;}
-use DBI;
-$loaded = 1;
-print "ok 1\n";
+use Test::More tests => 4;
+
+use vars qw($Pwd $Uid $Srv $Db);
+
+BEGIN { use_ok('DBI');
+        use_ok('DBD::Sybase');}
 
 ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
-
-$dbh and print "ok 2\n"
-    or print "not ok 2\n";
+#DBI->trace(3);
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 1});
+#DBI->trace(0);
+ok(defined($dbh), 'Connect');
 
 $dbh->disconnect if $dbh;
 
 $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", 'ohmygod', 'xzyzzy', {PrintError => 0});
 
-$dbh and print "not ok 3\n"
-    or print "ok 3\n";
+ok(!defined($dbh), 'Connect fail');
 
 $dbh->disconnect if $dbh;
 

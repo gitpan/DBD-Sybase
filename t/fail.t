@@ -1,25 +1,27 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.7 2004/10/02 08:38:37 mpeppler Exp $
+# $Id: fail.t,v 1.8 2004/12/16 12:06:01 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
 
+use strict;
+
 use lib 't';
 use _test;
 
-BEGIN {print "1..13\n";}
-END {print "not ok 1\n" unless $loaded;}
-use DBI;
-$loaded = 1;
-print "ok 1\n";
+use Test::More tests=>12; #qw(no_plan);
+
+BEGIN { use_ok('DBI');
+        use_ok('DBD::Sybase');}
+
+use vars qw($Pwd $Uid $Srv $Db);
 
 ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0, syb_flush_finish => 1});
 
-die "Unable for connect to $Srv: $DBI::errstr"
-    unless $dbh;
+ok(defined($dbh), 'Connect');
 
 my $rc;
 #DBI->trace(4);
@@ -30,36 +32,32 @@ select * from master..sysdatabases
 ");
 $rc = $sth->execute;
 
-defined($rc) and print "not ok 2\n"
-    or print "ok 2\n";
+ok(!defined($rc), 'Missing table');
+
 $sth = $dbh->prepare("select * from sysusers\n");
 $rc = $sth->execute;
-defined($rc) and print "ok 3\n"
-    or print "not ok 3\n";
+ok(defined($rc), 'Sysusers');
+
 while(my $d = $sth->fetch) {
     ;
 }
-print "ok 4\n";
-$rc = $dbh->do("create table #test(one int not null primary key, two int not null, three int not null check(two != three))");
-defined($rc) and print "ok 5\n"
-    or print "not ok 5\n";
 
-if($dbh->{syb_dynamic_supported}) {
+$rc = $dbh->do("create table #test(one int not null primary key, two int not null, three int not null check(two != three))");
+
+ok(defined($rc), 'Create table');
+
+SKIP: {
+    skip '? placeholders not supported', 3 unless $dbh->{syb_dynamic_supported};
 
     $sth = $dbh->prepare("insert #test (one, two, three) values(?,?,?)");
     $rc = $sth->execute(3, 4, 5);
-    defined($rc) and print "ok 6\n"
-	or print "not ok 6\n";
+    ok(defined($rc), 'prepare w/placeholder');
+
     $rc = $sth->execute(3, 4, 5);
-    defined($rc) and print "not ok 7\n"
-	or print "ok 7\n";
+    ok(!defined($rc), 'execute w/placeholder');
+
     $rc = $sth->execute(5, 3, 3);
-    defined($rc) and print "not ok 8\n"
-	or print "ok 8\n";
-} else {
-    for (6 .. 8) {
-	print "ok $_ # skip\n";
-    }
+    ok(!defined($rc), 'execute w/placeholder');
 }
 
 $sth = $dbh->prepare("
@@ -69,18 +67,16 @@ insert #test(one, two, three) values (1, 2, 3)
 insert #test(one, two, three) values (8, 9, 10)
 ");
 $rc = $sth->execute;
-defined($rc) and print "not ok 9\n"
-    or print "ok 9\n";
+ok(!defined($rc), 'prepare');
 
 $sth = $dbh->prepare("select * from #test");
 $rc = $sth->execute;
-defined($rc) and print "ok 10\n"
-    or print "not ok 10\n";
+ok(defined($rc), 'select');
 
 while(my $d = $sth->fetch) {
     print "@$d\n";
 }
-print "ok 11\n";
+#print "ok 11\n";
 
 
 $sth = $dbh->prepare("
@@ -89,14 +85,12 @@ select * from #test
 insert #test(one, two, three) values (11, 12, 13)
 ");
 $rc = $sth->execute;
-defined($rc) and print "ok 12\n"
-    or print "not ok 12\n";
+ok(defined($rc), 'prepare/execute multi');
 do {
     while(my $d = $sth->fetch) {
 	print "@$d\n";
     }
 } while($sth->{syb_more_results});
-print "ok 13\n";
 
 $dbh->do("drop table #test");
 

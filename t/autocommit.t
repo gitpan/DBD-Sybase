@@ -1,6 +1,6 @@
-#!/usr/local/bin/perl
+#!/usr/bin/perl
 #
-# $Id: autocommit.t,v 1.2 2003/09/08 21:30:22 mpeppler Exp $
+# $Id: autocommit.t,v 1.3 2004/12/16 12:06:01 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -9,13 +9,16 @@ use lib 't';
 
 use _test;
 
-use vars qw($Pwd $Uid);
+use strict;
 
-BEGIN {print "1..4\n";}
-END {print "not ok 1\n" unless $loaded;}
-use DBI;
-$loaded = 1;
-print "ok 1\n";
+use Test::More tests => 5;
+#use Test::More qw(no_plan);
+
+BEGIN { use_ok('DBI');
+        use_ok('DBD::Sybase');}
+
+use vars qw($Pwd $Uid $Srv $Db);
+
 
 #DBI->trace(2);
 
@@ -23,8 +26,7 @@ print "ok 1\n";
 
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
-$dbh and print "ok 2\n"
-    or print "not ok 2\n";
+ok(defined($dbh), 'Connect');
 
 $dbh->do("create table #ttt (foo varchar(20), bar int)");
 $dbh->{AutoCommit} = 0;
@@ -41,7 +43,7 @@ while(my $d = $sth->fetch) {
     print "@$d\n";
     ++$found;
 }
-$found && print "not ok 3\n" or print "ok 3\n";
+ok(!$found, 'rollback');
 
 $dbh->do("insert #ttt values('a string', 1)");
 $dbh->do("insert #ttt values('another string', 2)");
@@ -56,7 +58,7 @@ while(my $d = $sth->fetch) {
     print "@$d\n";
     ++$found;
 }
-$found == 4 && print "ok 4\n" or print "not ok 4\n";
+ok($found == 4, 'Commit');
 
 $dbh->disconnect;
 

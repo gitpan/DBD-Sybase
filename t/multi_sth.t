@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: multi_sth.t,v 1.1 2004/11/26 09:48:07 mpeppler Exp $
+# $Id: multi_sth.t,v 1.2 2004/12/16 12:06:01 mpeppler Exp $
 #
 #
 # Multiple sth on single dbh test.
@@ -18,9 +18,10 @@ BEGIN { use_ok('DBI');
 use vars qw($Pwd $Uid $Srv $Db);
 
 ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
+
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", 
 		       $Uid, $Pwd, 
-		       {PrintError=>1,
+		       {PrintError=>0,
 			AutoCommit => 1,});
 
 ok(defined($dbh), 'Connect');
@@ -73,120 +74,131 @@ sub test1 {
 sub test2 {
     my $dbh = shift;
 
-    my $rc;
+ SKIP: {
+	skip '? placeholders not supported', 6 unless $dbh->{syb_dynamic_supported};
 
-    my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
-    ok(defined($sth1), 'test2 prepare1');
-    my $sth2 = $dbh->prepare("select * from sysusers where suid = ?");
-    ok(defined($sth2), 'test2 prepare2');
+	my $rc;
 
-    $rc = $sth1->execute(1);
-    ok(defined($rc), 'test2 execute1');
-    $rc = 0;
-    while(my $d = $sth1->fetch) {
+	my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
+	ok(defined($sth1), 'test2 prepare1');
+	my $sth2 = $dbh->prepare("select * from sysusers where suid = ?");
+	ok(defined($sth2), 'test2 prepare2');
+	
+	$rc = $sth1->execute(1);
+	ok(defined($rc), 'test2 execute1');
+	$rc = 0;
+	while(my $d = $sth1->fetch) {
+	    if($sth1->err) {
+		$rc = $sth1->err;
+	    }
+	}
 	if($sth1->err) {
 	    $rc = $sth1->err;
 	}
-    }
-    if($sth1->err) {
-	$rc = $sth1->err;
-    }
-    ok($rc == 0, "test2 fetch1");
-    $rc = $sth2->execute(1);
-    ok(defined($rc), 'test2 execute2');
-    $rc = 0;
-    while(my $d = $sth2->fetch) {
+	ok($rc == 0, "test2 fetch1");
+	$rc = $sth2->execute(1);
+	ok(defined($rc), 'test2 execute2');
+	$rc = 0;
+	while(my $d = $sth2->fetch) {
+	    if($sth2->err) {
+		$rc = $sth2->err;
+	    }
+	}
 	if($sth2->err) {
 	    $rc = $sth2->err;
 	}
-    }
-    if($sth2->err) {
-	$rc = $sth2->err;
-    }
-    ok($rc == 0, "test2 fetch2");
+	ok($rc == 0, "test2 fetch2");
+    }  # SKIP
 }
 
 # Same thing, with placeholders.
 sub test3 {
     my $dbh = shift;
 
-    my $rc;
+ SKIP: {
+	skip '? placeholders not supported', 6 unless $dbh->{syb_dynamic_supported};
+	my $rc;
 
-    my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
-    ok(defined($sth1), 'test3 prepare1');
-    my $sth2 = $dbh->prepare("select * from sysusers where suid = ?");
-    ok(defined($sth2), 'test3 prepare2');
+	my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
+	ok(defined($sth1), 'test3 prepare1');
+	my $sth2 = $dbh->prepare("select * from sysusers where suid = ?");
+	ok(defined($sth2), 'test3 prepare2');
 
-    $rc = $sth1->execute(1);
-    ok(defined($rc), 'test3 execute1');
-    # Interleaved execute()
+	$rc = $sth1->execute(1);
+	ok(defined($rc), 'test3 execute1');
+	# Interleaved execute()
 
-    $rc = $sth2->execute(1);
-    ok(defined($rc), 'test3 execute2');
+	$rc = $sth2->execute(1);
+	ok(defined($rc), 'test3 execute2');
 
-    $rc = 0;
-    while(my $d = $sth1->fetch) {
+	$rc = 0;
+	while(my $d = $sth1->fetch) {
+	    if($sth1->err) {
+		$rc = $sth1->err;
+	    }
+	}
 	if($sth1->err) {
 	    $rc = $sth1->err;
 	}
-    }
-    if($sth1->err) {
-	$rc = $sth1->err;
-    }
-    ok($rc == 0, "test3 fetch1");
-
-    $rc = 0;
-    #DBI->trace(4);
-    while(my $d = $sth2->fetch) {
+	ok($rc == 0, "test3 fetch1");
+	
+	$rc = 0;
+	#DBI->trace(4);
+	while(my $d = $sth2->fetch) {
+	    if($sth2->err) {
+		$rc = $sth2->err;
+	    }
+	}
 	if($sth2->err) {
 	    $rc = $sth2->err;
 	}
-    }
-    if($sth2->err) {
-	$rc = $sth2->err;
-    }
-    ok($rc == 0, "test3 fetch2");
+	ok($rc == 0, "test3 fetch2");
+    } #SKIP
 }
 
 # Same thing, first with placeholders, second without
 sub test4 {
     my $dbh = shift;
 
-    my $rc;
+ SKIP: {
+	skip '? placeholders not supported', 6 unless $dbh->{syb_dynamic_supported};
 
-    my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
-    ok(defined($sth1), 'test4 prepare1');
-    my $sth2 = $dbh->prepare("select * from sysusers");
-    ok(defined($sth2), 'test4 prepare2');
+	my $rc;
 
-    $rc = $sth1->execute(1);
-    ok(defined($rc), 'test4 execute1');
-    # Interleaved execute()
-    $rc = $sth2->execute();
-    ok(defined($rc), 'test4 execute2');
+	my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
+	ok(defined($sth1), 'test4 prepare1');
+	my $sth2 = $dbh->prepare("select * from sysusers");
+	ok(defined($sth2), 'test4 prepare2');
 
-    $rc = 0;
-    while(my $d = $sth1->fetch) {
+	$rc = $sth1->execute(1);
+	ok(defined($rc), 'test4 execute1');
+	# Interleaved execute()
+	$rc = $sth2->execute();
+	ok(defined($rc), 'test4 execute2');
+
+	$rc = 0;
+	while(my $d = $sth1->fetch) {
+	    if($sth1->err) {
+		$rc = $sth1->err;
+	    }
+	}
 	if($sth1->err) {
 	    $rc = $sth1->err;
 	}
-    }
-    if($sth1->err) {
-	$rc = $sth1->err;
-    }
-    ok($rc == 0, "test4 fetch1");
-
-    $rc = 0;
-    #DBI->trace(4);
-    while(my $d = $sth2->fetch) {
+	ok($rc == 0, "test4 fetch1");
+	
+	$rc = 0;
+	#DBI->trace(4);
+	while(my $d = $sth2->fetch) {
+	    if($sth2->err) {
+		$rc = $sth2->err;
+	    }
+	}
 	if($sth2->err) {
 	    $rc = $sth2->err;
 	}
-    }
-    if($sth2->err) {
-	$rc = $sth2->err;
-    }
-    ok($rc == 0, "test4 fetch2");
+	ok($rc == 0, "test4 fetch2");
+    } #SKIP
 }
 
 # This time, set the "no_child_con" flag, and execute the statements
@@ -194,57 +206,60 @@ sub test4 {
 sub test5 {
     my $dbh = shift;
 
-    my $rc;
+ SKIP: {
+	skip '? placeholders not supported', 8 unless $dbh->{syb_dynamic_supported};
+	my $rc;
 
-    $dbh->{syb_no_child_con} = 1;
+	$dbh->{syb_no_child_con} = 1;
 
-    my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
-    ok(defined($sth1), 'test5 prepare1');
+	my $sth1 = $dbh->prepare("select * from master..sysprocesses where spid = ?");
+	ok(defined($sth1), 'test5 prepare1');
 
-    $rc = $sth1->execute(1);
-    ok(defined($rc), 'test5 execute1');
+	$rc = $sth1->execute(1);
+	ok(defined($rc), 'test5 execute1');
 
-    $rc = 0;
-    while(my $d = $sth1->fetch) {
+	$rc = 0;
+	while(my $d = $sth1->fetch) {
+	    if($sth1->err) {
+		$rc = $sth1->err;
+	    }
+	}
 	if($sth1->err) {
 	    $rc = $sth1->err;
 	}
-    }
-    if($sth1->err) {
-	$rc = $sth1->err;
-    }
-    ok($rc == 0, "test5 fetch1");
+	ok($rc == 0, "test5 fetch1");
+	
+	my $sth2 = $dbh->prepare("select * from sysusers");
+	ok(defined($sth2), 'test5 prepare2');
+	$rc = $sth2->execute();
+	ok(defined($rc), 'test5 execute2');
 
-    my $sth2 = $dbh->prepare("select * from sysusers");
-    ok(defined($sth2), 'test5 prepare2');
-    $rc = $sth2->execute();
-    ok(defined($rc), 'test5 execute2');
-
-    $rc = 0;
-    #DBI->trace(4);
-    while(my $d = $sth2->fetch) {
+	$rc = 0;
+	#DBI->trace(4);
+	while(my $d = $sth2->fetch) {
+	    if($sth2->err) {
+		$rc = $sth2->err;
+	    }
+	}
 	if($sth2->err) {
 	    $rc = $sth2->err;
 	}
-    }
-    if($sth2->err) {
-	$rc = $sth2->err;
-    }
-    ok($rc == 0, "test5 fetch2");
+	ok($rc == 0, "test5 fetch2");
 
-    $rc = $sth1->execute(1);
-    ok(defined($rc), 'test5 execute3');
+	$rc = $sth1->execute(1);
+	ok(defined($rc), 'test5 execute3');
 
-    $rc = 0;
-    while(my $d = $sth1->fetch) {
+	$rc = 0;
+	while(my $d = $sth1->fetch) {
+	    if($sth1->err) {
+		$rc = $sth1->err;
+	    }
+	}
 	if($sth1->err) {
 	    $rc = $sth1->err;
 	}
-    }
-    if($sth1->err) {
-	$rc = $sth1->err;
-    }
-    ok($rc == 0, "test5 fetch3");
+	ok($rc == 0, "test5 fetch3");
+    } #SKIP
 
     $dbh->{syb_no_child_con} = 0;
 

@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: exec.t,v 1.6 2004/10/07 17:56:55 mpeppler Exp $
+# $Id: exec.t,v 1.7 2004/12/19 09:52:39 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -42,7 +42,7 @@ get_all_results($sth);
 
 #$dbh->do("use tempdb");
 $dbh->do("set arithabort off");
-#$dbh->do("drop proc dbitest");
+$dbh->do("if object_id('dbitest') != NULL drop proc dbitest");
 $rc = $dbh->do(qq{
 create proc dbitest \@one varchar(20), \@two int, \@three numeric(5,2), \@four smalldatetime, \@five float output
 as

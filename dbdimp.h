@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.32 2004/11/26 09:48:06 mpeppler Exp $
+   $Id: dbdimp.h,v 1.33 2004/12/16 12:06:01 mpeppler Exp $
 
    Copyright (c) 1997-2004  Michael Peppler
 
@@ -88,6 +88,7 @@ struct imp_dbh_st {
     char      blkLogin[16];
 
     char      serverVersion[15];
+    char      serverVersionString[255];
 
     int       isDead;
 
