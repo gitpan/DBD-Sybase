@@ -8,7 +8,7 @@
 
 =head2 Driver Name, Version, Author and Contact Details
 
-This driver summary is for DBD::Sybase version 0.18.
+This driver summary is for DBD::Sybase version 0.90.
 
 The driver author is Michael Peppler and he can be contacted via the
 dbi-users mailing list, or at mpeppler@peppler.org
@@ -16,10 +16,15 @@ dbi-users mailing list, or at mpeppler@peppler.org
 
 =head2 Supported Database Versions and Options
 
-The DBD::Sybase module supports Sybase 10.x and 11.x, and offers
-limited support for accessing Microsoft MS-SQL 6.x (but not 7.x)
+The DBD::Sybase module supports Sybase 10.x, 11.x and 12.x, and offers
+limited support for accessing Microsoft MS-SQL 6.x and 7.x (as SP2)
 server.  Assuming that OpenClient 10.x or 11.x is available DBD::Sybase
 can be used to connect to Sybase 4.x servers.
+
+In addition DBD::Sybase can be used in combination with the
+FreeTDS reimplementation of OpenClient to connect to MS-SQL or
+Sybase servers from platforms where Sybase OpenClient is not available.
+See http://www.freetds.org for details.
 
 =head2 Connect Syntax
 
@@ -89,10 +94,6 @@ Valid values are CS_TDS_40, CS_TDS_42, CS_TDS_46, CS_TDS_495 and CS_TDS_50.
 In general this is automatically negotiated between the client and the 
 server, but in certain cases this may need to be forced to a lower level
 by the client. 
-
-I have heard rumors that setting this to CS_TDS_42 enables DBD::Sybase
-to connect to an MS-SQL 7.0 server, although I can't confirm that
-firsthand.
 
     $dbh->DBI->connect("dbi:Sybase:tdsLevel=CS_TDS_42", $user, $password);
 
@@ -229,15 +230,14 @@ value to the correct GMT based value with this perl expression:
 =head2 LONG/BLOB Data Handling
 
 Sybase supports an IMAGE and a TEXT type for LONG/BLOB data.  Each type
-can hold up to 2BG of binary data, including nul characters. The main
+can hold up to 2GB of binary data, including nul characters. The main
 difference between an IMAGE and a TEXT column lies in how the client
 libraries treat the data on input and output. TEXT data is entered and
 returned "as is". IMAGE data is returned as a long hex string, and
 should be entered in the same way.
 
-LongReadLen and LongTrunkOk attributes have no effect. The default
-limit for TEXT/IMAGE data is 32Kb, but this can be changed by the SET
-TEXTSIZE Transact-SQL command.
+The default size limit for TEXT/IMAGE data is 32Kb, but this can be 
+changed by setting the LongReadLen attribute.
 
 Bind parameters can I<not> be used to insert TEXT or IMAGE data to
 Sybase.
@@ -245,7 +245,10 @@ Sybase.
 
 =head2 Other Data Handling issues
 
-The DBD::Sybase driver does not support the type_info method yet.
+Sybase does not differentiate between CHAR and VARCHAR or BINARY and
+VARBINARY on returned data, so you will never get a TYPE value of
+SQL_VARCHAR or SQL_VARBINARY when querying the $h->{TYPE} attribute
+for a result set.
 
 Sybase does not automatically convert numbers to strings or strings to
 numbers.  You need to explicitly call the C<CONVERT> SQL function.
@@ -269,10 +272,12 @@ reads. This will allow any other process to read from the table,
 but will block any process trying to obtain an exclusive lock (for
 update). The shared lock is only maintained for the time the server needs 
 to actually read the page, not for the entire length of the SELECT
-operation. Note that 11.9.2 and later servers have various new
-locking mechanisms that I'm not familiar with yet.
+operation. Sybase 11.9.2 and later include optional row-level locking
+("datarows" locking) which can be set on a table by table basis. See the
+Sybase manuals for details.
 
-There is no explicit LOCK TABLE statement.
+There is an explicit LOCK TABLE statement (from 11.9.2 onwards) but
+you should not normally need to use it.
 Appending "WITH HOLDLOCK" to a SELECT statement can be used to force an
 exclusive lock to be aquired on a table. It is usually called within a
 transaction. In general this call is not needed.
@@ -304,6 +309,8 @@ For all rows in the customers table that have no matching rows in the
 orders table, Sybase returns NULL for any select list expressions
 containing columns from the orders table.
 
+ASE 12.0 and later supports the ANSI syntax for left/right outer 
+joins.
 
 =head2 Table and Column Names
 
@@ -365,6 +372,13 @@ complete explanation of the various possibilities.
 Sybase does not offer a pseudocolumn that sequentially numbers the rows
 fetched by a select statement.
 
+However, using 
+
+	SET ROWCOUNT xxx
+
+will limit the number of rows returned in a SELECT statement I<or>
+the number of rows affected by a DELETE, INSERT or UPDATE statement.
+
 
 =head2 Parameter binding
 
@@ -379,8 +393,8 @@ prepare() calls with placeholders are being made in a script.
 
 Secondly, because all the temporary stored procedures are created in
 tempdb this causes a potential hot-spot due to the locking of system
-tables in tempdb. I'm told that this performance problem will be
-removed in an upcoming release of Sybase (possibly 11.9.4 or 12.0).
+tables in tempdb. This hot-spot is a problem in Sybase 11.5.1 and
+earlier, but has been lifted in 11.9.2 and later releases.
 
 The :1 placeholder style is not supported and the TYPE attribute to
 bind_param is currently ignored, so unsupported values don't generate a
@@ -459,9 +473,6 @@ duplicate insert to fail, for example.
 
 =item syb_err_handler
 
-B<NEW> Note that the syntax for the error handler is experimental and
-may change in future versions.
-
 This attribute is used to set an ad-hoc error handler callback (ie a perl 
 subroutine) that gets called before the normal error handler does it's job.
 If this subroutine returns 0 then the error is ignored. This is useful
@@ -520,6 +531,52 @@ This attribute should usually be used only during the connect() call:
 Using it at any other time with B<AutoCommit> turned B<off> will 
 B<force a commit> on the current handle.
 
+=item syb_use_bin_0x
+
+If set, BINARY and VARBINARY values are prefixed with '0x' in the
+result. Default is off.
+
+=item syb_quoted_identifier (bool)
+
+If set, then identifiers that would normally clash with Sybase reserved
+words can be quoted using C<"identifier">. In this case strings must
+be quoted with the single quote.
+
+Default is for this attribute to be B<off>.
+
+=item syb_rowcount (int)
+
+Setting this attribute to non-0 will limit the number of rows returned by
+a I<SELECT>, or affected by an I<UPDATE> or I<DELETE> statement to the
+I<rowcount> value. Setting it back to 0 clears the limit.
+
+Default is for this attribute to be B<0>.
+
+=item syb_do_proc_status (bool)
+
+Setting this attribute causes $sth->execute() to fetch the return status
+of any executed stored procs in the SQL being executed. If the return
+status is non-0 then $sth->execute() will report that the operation 
+failed (ie it will return C<undef>)
+
+Setting this attribute does B<NOT> affect existing $sth handles, only
+those that are created after setting it. To change the behavior of 
+an existing $sth handle use $sth->{syb_do_proc_status}.
+
+The default is for this attribute to be B<off>.
+
+=item syb_oc_version (string)
+
+Returns the identification string of the version of Client Library that
+this binary is currently using. This is a read-only attribute.
+
+For example:
+
+    troll (7:59AM):348 > perl -MDBI -e '$dbh = DBI->connect("dbi:Sybase:", "sa"); print "$dbh->{syb_oc_version}\n";' 
+    Sybase Client-Library/11.1.1/P/Linux Intel/Linux 2.2.5 i586/1/OPT/Mon Jun  7 07:50:21 1999
+
+This is very useful information to have when reporting a problem.
+
 
 =back
 
@@ -576,7 +633,7 @@ originally written for other drivers.
 
 =head2 Concurrent use of multiple handles
 
-DBD::Sybase supports an unlimited number of concurrent database
+DBD::Sybase supports up to 25 concurrent database
 connections to one or more databases.
 
 It is not normally possible for Sybase clients to prepare/execute
@@ -611,5 +668,5 @@ functionality and encourages you to use them.
 
 # This driver summary for DBD::Sybase is Copyright (c) 1999 Tim Bunce
 # and Michael Peppler.
-# $Id: dbd-sybase.pod,v 1.3 1999/06/22 07:21:55 mpeppler Exp $
+# $Id: dbd-sybase.pod,v 1.5 2000/11/06 18:58:45 mpeppler Exp $
 

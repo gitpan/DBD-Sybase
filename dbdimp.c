@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.22 2000/09/01 18:29:27 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.23 2000/11/06 18:58:32 mpeppler Exp $
 
    Copyright (c) 1997,1998,1999,2000  Michael Peppler
 
@@ -64,7 +64,7 @@ CS_CLIENTMSG	*errmsg;
 	if(DBIc_is(imp_dbh, DBIcf_LongTruncOk) &&
 	   CS_NUMBER(errmsg->msgnumber) == 132)
 	    return CS_SUCCEED;
-	
+
 	if(imp_dbh->err_handler) {
 	    dSP;
 	    SV *sv, **svp;
@@ -124,19 +124,24 @@ CS_CLIENTMSG	*errmsg;
 	    imp_dbh->isDead = 1;
 	}
 
-	/* If this is a timeout message, return CS_FAIL to cancel the
-	   operation and (if we're lucky) mark the connection as dead.
-	   After a timeout the connection should be considered unusable.
-	   Note that returning CS_SUCCEED on timeout simply tells the
-	   library to wait for another timeout period after which this
-	   callback will probably be called again. */
+	/* If this is a timeout message, cancel the current request.
+	   If the cancel fails, then return CS_FAIL, and mark
+	   the connection dead.
+	   Do NOT return CS_FAIL in all cases, as this makes the
+	   connection unusable, and that may not be the correct
+	   behavior in all situations. */
 	
 	if (CS_SEVERITY(errmsg->msgnumber) == CS_SV_RETRY_FAIL &&
 	    CS_NUMBER(errmsg->msgnumber) == 63 &&
 	    CS_ORIGIN(errmsg->msgnumber) == 2 &&
 	    CS_LAYER(errmsg->msgnumber) == 1) {
-	    imp_dbh->isDead = 1;	/* XXX */
-	    return CS_FAIL;
+	    if(ct_cancel(connection, NULL, CS_CANCEL_ATTN) == CS_FAIL) {
+/*		ct_close(connection, CS_FORCE_CLOSE);   XXX */
+		imp_dbh->isDead = 1;
+		return CS_FAIL;
+	    }	  
+/*	    imp_dbh->isDead = 1;	 XXX */
+	    return CS_SUCCEED;
 	}
     } else {			/* !connection */
 	fprintf(stderr, "OpenClient message: ");
@@ -547,6 +552,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd)
     imp_dbh->quotedIdentifier = 0;
     imp_dbh->rowcount         = 0;
     imp_dbh->doProcStatus     = 0;
+    imp_dbh->useBin0x         = 0;
     
     if(strchr(dsn, '=')) {
 	extractFromDsn("server=", dsn, imp_dbh->server, 64);
@@ -1191,7 +1197,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
 
-    if(kl == 25 && strEQ(key, "syb_quoted_identifier")) {
+    if(kl == 21 && strEQ(key, "syb_quoted_identifier")) {
 	CS_INT value = SvIV(valuesv);
 	CS_RETCODE ret;
 	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_QUOTED_IDENT, 
@@ -1271,6 +1277,15 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	}
 	return TRUE;
     }	
+    if (kl == 14 && strEQ(key, "syb_use_bin_0x")) {
+	on = SvTRUE(valuesv);
+	if(on) {
+	    imp_dbh->useBin0x = 1;
+	} else {
+	    imp_dbh->useBin0x = 0;
+	}
+	return TRUE;
+    }
     return FALSE;
 }
 
@@ -1356,7 +1371,7 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	    retsv = newSViv(1);
     }
 
-    if(kl == 25 && strEQ(key, "syb_quoted_identifier")) {
+    if(kl == 21 && strEQ(key, "syb_quoted_identifier")) {
 	if(imp_dbh->quotedIdentifier)
 	    retsv = newSViv(1);
 	else
@@ -1372,7 +1387,12 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     if (kl == 18 && strEQ(key, "syb_do_proc_status")) {
 	retsv = newSViv(imp_dbh->doProcStatus);
     }	
-
+    if (kl == 14 && strEQ(key, "syb_use_bin_0x")) {
+	if(imp_dbh->useBin0x) 
+	    retsv = newSViv(1);
+	else
+	    retsv = newSViv(0);
+    }
     return retsv;
 }
 
@@ -1523,7 +1543,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	
     if((int)DBIc_NUM_PARAMS(imp_sth)) {
 	CS_INT restype;
-	int tt = rand() % 0xfffffff; 
+	static int tt = 1; 
 	int failed = 0;
 	CS_BOOL val;
 
@@ -1532,7 +1552,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	if(ret != CS_SUCCEED || val == CS_FALSE)
 	    croak("Panic: dynamic SQL (? placeholders) are not supported by the server you are connecting to");
 
-	sprintf(imp_sth->dyn_id, "DBD%x", (int)tt);
+	sprintf(imp_sth->dyn_id, "DBD%x", (int)tt++);
 
 	if (dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_st_prepare: ct_dynamic(CS_PREPARE) for %s\n",
@@ -1774,6 +1794,13 @@ describe(imp_sth, restype)
 			      imp_sth->coldata[i].value.c,
 			      &imp_sth->coldata[i].valuelen,
 			      &imp_sth->coldata[i].indicator);
+           /* Now that we've accomplished the CHAR actions, set the type back
+              to BINARY if appropriate, so the useBin0x actions work later. */
+	    if (imp_sth->coldata[i].realType == CS_BINARY_TYPE ||
+		imp_sth->coldata[i].realType == CS_VARBINARY_TYPE) {
+		imp_sth->coldata[i].type = imp_sth->datafmt[i].datatype =
+		    imp_sth->coldata[i].realType;
+	    }
 	    break;
 	}	
 	/* check the return code of the call to ct_bind in the
@@ -1831,7 +1858,9 @@ st_next_result(sth, imp_sth)
 	      if(dbis->debug >= 2)
 		  fprintf(DBILOGFP, "describe() retcode = %d\n", retcode);
 
-	      if(restype == CS_STATUS_RESULT && imp_sth->doProcStatus) {
+	      if(restype == CS_STATUS_RESULT && (imp_sth->doProcStatus ||
+		  imp_sth->dyn_execed)) 
+	      {
 		  CS_INT rows_read;
 		  retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read);
 		  if(retcode == CS_SUCCEED) {
@@ -1929,13 +1958,16 @@ syb_st_execute(sth, imp_sth)
     if(dbis->debug >= 2)
 	fprintf(DBILOGFP, "    syb_st_execute() -> ct_send() OK\n");
 
+    imp_sth->exec_done = 1;
+
     restype = st_next_result(sth, imp_sth);
 
     if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
 	if(dbis->debug >= 2)
 	    fprintf(DBILOGFP, "    syb_st_execute() -> got CS_CMD_DONE: resetting ACTIVE, moreResults, dyn_execed\n");
 	imp_sth->moreResults = 0;
-	imp_sth->dyn_execed = 0;
+	imp_sth->dyn_execed  = 0;
+	imp_sth->exec_done   = 0;
 	DBIc_ACTIVE_off(imp_sth);
     } else {
 	DBIc_ACTIVE_on(imp_sth);
@@ -1989,7 +2021,7 @@ syb_st_fetch(sth, imp_sth)
     /* Check that execute() was executed sucessfully. This also implies	*/
     /* that describe() executed sucessfuly so the memory buffers	*/
     /* are allocated and bound.						*/
-    if ( !DBIc_is(imp_sth, DBIcf_ACTIVE) ) {
+    if ( !DBIc_is(imp_sth, DBIcf_ACTIVE) || !imp_sth->exec_done ) {
 	warn("no statement executing");
 	return Nullav;
     }
@@ -2065,6 +2097,18 @@ syb_st_fetch(sth, imp_sth)
 		  case CS_INT_TYPE:
 		      sv_setiv(sv, imp_sth->coldata[i].value.i);
 		      break;
+		  case CS_BINARY_TYPE:
+		  case CS_VARBINARY_TYPE:
+		      if (imp_dbh->useBin0x) {
+			  /* Add 0x to the front */
+			  sv_setpv(sv, "0x");
+		      } else {
+			  /* stick in empty string so the concat works */
+			  sv_setpv(sv, "");
+		      }
+		      len = imp_sth->coldata[i].valuelen;
+                     sv_catpvn(sv, imp_sth->coldata[i].value.c, len);
+		     break;
 		  default:
 		    croak("syb_st_fetch: unknown datatype: %d, column %d",
 			  imp_sth->datafmt[i].datatype, i);
@@ -2441,6 +2485,109 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
     return FALSE;
 }
 
+static CS_NUMERIC
+to_numeric(str, locale, datafmt)
+    char *str;
+    CS_LOCALE *locale;
+    CS_DATAFMT *datafmt;
+{
+    CS_NUMERIC mn;
+    CS_DATAFMT srcfmt;
+    CS_INT reslen;
+    char *p;
+
+    memset(&mn, 0, sizeof(mn));
+
+    if(!str || !*str)
+	str = "0";
+    
+    memset(&srcfmt, 0, sizeof(srcfmt));
+    srcfmt.datatype  = CS_CHAR_TYPE;
+    srcfmt.maxlength = strlen(str);
+    srcfmt.format    = CS_FMT_NULLTERM;
+    srcfmt.locale    = locale;
+
+    /* If the number of digits after the . is larger than
+       the 'scale' value in datafmt, then we need to adjust it. Otherwise
+       the conversion fails */
+    if((p = strchr(str, '.'))) {
+	int len = strlen(++p);
+	if(len > datafmt->scale) {
+	    if(p[datafmt->scale] < '5')
+		p[datafmt->scale] = 0;
+	    else {
+		p[datafmt->scale] = 0;
+		len = strlen(str);
+		while(len--) {
+		    if(str[len] == '.')
+			continue;
+		    if(str[len] < '9') {
+			str[len]++;
+			break;
+		    }
+		    str[len] = '0';
+		    if(len == 0) {
+			char buf[64];
+			buf[0] = '1';
+			buf[1] = 0;
+			strcat(buf, str);
+			strcpy(str, buf);
+			break;
+		    }
+		}
+	    }
+	}
+    }
+	    
+    if (cs_convert(context, &srcfmt, str, datafmt,
+		   &mn, &reslen) != CS_SUCCEED)
+	warn("cs_convert failed (to_numeric(%s))", str);
+
+    if(reslen == CS_UNUSED)
+	warn("conversion failed: to_numeric(%s)", str);
+
+
+    return mn;
+}
+
+static CS_MONEY
+to_money(str, locale)
+    char *str;
+    CS_LOCALE *locale;
+{
+    CS_MONEY mn;
+    CS_DATAFMT srcfmt, destfmt;
+    CS_INT reslen;
+
+    memset(&mn, 0, sizeof(mn));
+
+    if(!str)
+	return mn;
+    
+    memset(&srcfmt, 0, sizeof(srcfmt));
+    srcfmt.datatype  = CS_CHAR_TYPE;
+    srcfmt.maxlength = strlen(str);
+    srcfmt.format    = CS_FMT_NULLTERM;
+    srcfmt.locale    = locale;
+	    
+    memset(&destfmt, 0, sizeof(destfmt));
+	    
+    destfmt.datatype  = CS_MONEY_TYPE;
+    destfmt.locale    = locale;
+    destfmt.maxlength = sizeof(CS_MONEY);
+    destfmt.format    = CS_FMT_UNUSED;
+    
+    if (cs_convert(context, &srcfmt, str, &destfmt,
+		   &mn, &reslen) != CS_SUCCEED)
+	warn("cs_convert failed (to_money(%s))", str);
+
+    if(reslen == CS_UNUSED)
+	warn("conversion failed: to_money(%s)", str);
+
+    return mn;
+}
+
+
 static int 
 _dbd_rebind_ph(sth, imp_sth, phs, maxlen) 
     SV *sth;
@@ -2448,13 +2595,15 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     phs_t *phs;
     int maxlen;
 {
+    D_imp_dbh_from_sth;
     CS_RETCODE rc;
-
     STRLEN value_len;
     int i_value;
     double d_value;
     char *c_value;
     void *value;
+    CS_NUMERIC n_value;
+    CS_MONEY m_value;
 
     if (dbis->debug >= 2) {
         char *text = neatsvpv(phs->sv,0);
@@ -2504,12 +2653,22 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 	    value = &i_value;
 	    value_len = 4;
 	    break;
-	case CS_REAL_TYPE:
-	case CS_FLOAT_TYPE:
 	case CS_NUMERIC_TYPE:
 	case CS_DECIMAL_TYPE:
+	    n_value = to_numeric(phs->sv_buf, imp_dbh->locale, &phs->datafmt);
+	    phs->datafmt.datatype = CS_NUMERIC_TYPE;
+	    value = &n_value;
+	    value_len = sizeof(n_value);
+	    break;
 	case CS_MONEY_TYPE:
 	case CS_MONEY4_TYPE:
+	    m_value = to_money(phs->sv_buf, imp_dbh->locale);
+	    phs->datafmt.datatype = CS_MONEY_TYPE;
+	    value = &m_value;
+	    value_len = sizeof(m_value);
+	    break;
+	case CS_REAL_TYPE:
+	case CS_FLOAT_TYPE:
 	    phs->datafmt.datatype = CS_FLOAT_TYPE;
 	    d_value = atof(phs->sv_buf);
 	    value = &d_value;
@@ -2567,7 +2726,6 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     phs_t *phs;
     STRLEN lna;
 
-#if 1
     /* This is the way Tim does it in DBD::Oracle to get around the
        tainted issue. */
     if (SvGMAGICAL(ph_namesv))	/* eg if from tainted expression */
@@ -2580,13 +2738,6 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
 	name = namebuf;
 	name_len = strlen(name);
     }
-
-#else
-    /* just go ahead and always treat this as a number... */
-    name = namebuf;
-    sprintf(name, ":p%d", (int)SvIV(ph_namesv));
-    name_len = strlen(name);
-#endif
 
     if (SvTYPE(newvalue) > SVt_PVLV)    /* hook for later array logic   */
         croak("Can't bind non-scalar value (currently)");
@@ -2789,26 +2940,27 @@ CS_COMMAND	*cmd;
 static int map_types(int syb_type)
 {
     switch(syb_type) {
-    case CS_CHAR_TYPE:		return SQL_CHAR;
-    case CS_BINARY_TYPE:	return SQL_BINARY;
-    case CS_LONGCHAR_TYPE:	return SQL_CHAR; /* XXX */
-    case CS_LONGBINARY_TYPE:	return SQL_BINARY; /* XXX */
-    case CS_TEXT_TYPE:		return SQL_LONGVARCHAR; /* XXX */
-    case CS_IMAGE_TYPE:		return SQL_LONGVARBINARY; /* XXX */
-    case CS_BIT_TYPE:
-    case CS_TINYINT_TYPE:       return SQL_TINYINT;
-    case CS_SMALLINT_TYPE:      return SQL_SMALLINT;
-    case CS_INT_TYPE:		return SQL_INTEGER;
-    case CS_REAL_TYPE:		return SQL_REAL;
-    case CS_FLOAT_TYPE:		return SQL_FLOAT;
+    case CS_CHAR_TYPE:		return 1;
+    case CS_BINARY_TYPE:	return -2;
+/*    case CS_LONGCHAR_TYPE:	return SQL_CHAR; * XXX */
+/*    case CS_LONGBINARY_TYPE:	return SQL_BINARY; * XXX */
+    case CS_TEXT_TYPE:		return -1; /* XXX */
+    case CS_IMAGE_TYPE:		return -4; /* XXX */
+    case CS_BIT_TYPE:           return -7;
+    case CS_TINYINT_TYPE:       return -6;
+    case CS_SMALLINT_TYPE:      return 5; 
+    case CS_INT_TYPE:		return 4;
+    case CS_REAL_TYPE:		return 7; 
+    case CS_FLOAT_TYPE:		return 6;
     case CS_DATETIME_TYPE:
-    case CS_DATETIME4_TYPE:	return SQL_DATE;
+    case CS_DATETIME4_TYPE:	return 11;
     case CS_MONEY_TYPE:
-    case CS_MONEY4_TYPE:	return SQL_DECIMAL; /* XXX */
-    case CS_NUMERIC_TYPE:	return SQL_NUMERIC;
-    case CS_DECIMAL_TYPE:	return SQL_DECIMAL;
-    case CS_VARCHAR_TYPE:	return SQL_VARCHAR;
-    case CS_VARBINARY_TYPE:	return SQL_VARBINARY;
+    case CS_MONEY4_TYPE:	return 3;
+    case CS_NUMERIC_TYPE:	return 2;
+    case CS_DECIMAL_TYPE:	return 3;
+    case CS_VARCHAR_TYPE:	return 12;
+    case CS_VARBINARY_TYPE:	return -3;
+/*    case CS_TIMESTAMP_TYPE:     return -3;  */
 
     default:
 	return SQL_CHAR;

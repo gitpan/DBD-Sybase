@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.2 1999/09/28 16:14:21 mpeppler Exp $
+# $Id: fail.t,v 1.3 2000/11/06 18:50:17 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -59,16 +59,24 @@ print "ok 4\n";
 $rc = $dbh->do("create table #test(one int primary key, two int, three int check(two != three))");
 defined($rc) and print "ok 5\n"
     or print "not ok 5\n";
-$sth = $dbh->prepare("insert #test (one, two, three) values(?,?,?)");
-$rc = $sth->execute(3, 4, 5);
-defined($rc) and print "ok 6\n"
-    or print "not ok 6\n";
-$rc = $sth->execute(3, 4, 5);
-defined($rc) and print "not ok 7\n"
-    or print "ok 7\n";
-$rc = $sth->execute(5, 3, 3);
-defined($rc) and print "not ok 8\n"
-    or print "ok 8\n";
+
+if($dbh->{syb_dynamic_supported}) {
+
+    $sth = $dbh->prepare("insert #test (one, two, three) values(?,?,?)");
+    $rc = $sth->execute(3, 4, 5);
+    defined($rc) and print "ok 6\n"
+	or print "not ok 6\n";
+    $rc = $sth->execute(3, 4, 5);
+    defined($rc) and print "not ok 7\n"
+	or print "ok 7\n";
+    $rc = $sth->execute(5, 3, 3);
+    defined($rc) and print "not ok 8\n"
+	or print "ok 8\n";
+} else {
+    for (6 .. 8) {
+	print "ok $_ # skip\n";
+    }
+}
 
 $sth = $dbh->prepare("
 insert #test(one, two, three) values (1, 2, 3)

@@ -1,13 +1,13 @@
 #!/usr/local/bin/perl
 #
-# $Id: main.t,v 1.5 1999/08/30 14:24:45 mpeppler Exp $
+# $Id: main.t,v 1.6 2000/11/06 18:54:54 mpeppler Exp $
 
 # Base DBD Driver Test
 
 use lib 'blib/lib';
 use lib 'blib/arch';
 
-BEGIN {print "1..12\n";}
+BEGIN {print "1..14\n";}
 END {print "not ok 1\n" unless $loaded;}
 use DBI;
 $loaded = 1;
@@ -134,6 +134,19 @@ else {
 undef $sth;
 
 $dbh->{LongReadLen} = 32000;
+
+$dbh->{syb_quoted_identifier} = 1;
+
+($rc = $dbh->do('create table #tmp("TR Number" int, "Answer Code" char(2))'))
+    and print "ok 13\n"
+    or print "not ok 13\n";
+
+($rc = $dbh->do(qq(insert #tmp ("TR Number", "Answer Code") values(123, 'B'))))
+    and print "ok 14\n"
+    or print "not ok 14\n";
+
+$dbh->{syb_quoted_identifier} = 0;
+
 
 $dbh->disconnect;
 

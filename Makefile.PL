@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.13 2000/09/01 18:41:35 mpeppler Exp $
+# $Id: Makefile.PL,v 1.14 2000/10/04 15:48:53 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -86,6 +86,11 @@ sub configure {
 
     if(!$SYBASE || $SYBASE =~ /^\s*$/) {
 	die "Please set SYBASE in CONFIG, or set the \$SYBASE environment variable";
+    }
+
+    # System 12.0 has a different directory structure...
+    if(defined($ENV{SYBASE_OCS})) {
+	$SYBASE .= "/$ENV{SYBASE_OCS}";
     }
 
     if(! -d "$SYBASE/lib" || !-d "$SYBASE/include") {

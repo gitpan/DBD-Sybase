@@ -1,5 +1,5 @@
 /*
-   $Id: dbdimp.h,v 1.12 1999/10/01 17:27:57 mpeppler Exp $
+   $Id: dbdimp.h,v 1.12 1999/10/01 17:27:57 mpeppler Exp mpeppler $
 
    Copyright (c) 1997, 1998  Michael Peppler
 
@@ -55,6 +55,7 @@ struct imp_dbh_st {
     int       doRealTran;
     int       chainedSupported;
     int       quotedIdentifier;
+    int	      useBin0x;
 
     int lasterr;
     int lastsev;
@@ -120,6 +121,8 @@ struct imp_sth_st {
 
     int         doProcStatus;
     int         lastProcStatus;
+
+    int         exec_done;
 
     /* Input Details	*/
     char      dyn_id[50];	/* The id for this ct_dynamic() call */

@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: place.t,v 1.3 1999/05/31 21:34:03 mpeppler Exp $
+# $Id: place.t,v 1.3 1999/05/31 21:34:03 mpeppler Exp mpeppler $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -45,7 +45,7 @@ if(!$dbh->{syb_dynamic_supported}) {
     print STDERR "?-style placeholders aren't supported with this SQL Server.\n";
     my $i;
     for($i = 2; $i <= 11; ++$i) {
-	print "ok $i\n";
+	print "ok $i # skip\n";
     }
     $dbh->disconnect;
     exit(0);

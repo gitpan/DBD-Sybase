@@ -1,16 +1,13 @@
-$Id: README,v 1.14 2000/09/01 18:35:36 mpeppler Exp $
+$Id: README,v 1.15 2000/11/06 18:59:04 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996, 1997, 1998, 1999  Michael Peppler
+   Copyright (c) 1996, 1997, 1998, 1999, 2000  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
 
-		WARNING: THIS IS ALPHA SOFTWARE.
-		    IT IS INCOMPLETE!
-		IT IS POSSIBLY UNRELIABLE!
-
+		WARNING: THIS IS BETA SOFTWARE.
 
 
 This Sybase DBI driver is built using the Sybase OpenClient Client
@@ -26,11 +23,48 @@ For Linux you can get the full Sybase ASE 11.0.3.3 release for free
 See http://linux.sybase.com for details, or my homepage 
 (http://www.mbay.net/~mpeppler).
 
+An alternative is to use the FreeTDS reimplementation of Client Library.
+See http://www.freetds.org for details.
+
 DBD::Sybase is a reasonably complete implementation of the DBI spec, but 
 there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
+You'll notice that the release numbering has changed between this release
+and the preceding. I feel that DBD::Sybase is now solid enough to warrant
+a "beta" release with a target of releasing 1.00 sometime during this
+winter.
+
 Recent changes:
+
+Release 0.90
+
+        Release number sequence change: I'm dropping the "alpha" qualifier
+        and I expect to release 1.00 fairly soon.
+
+	Small Makefile.PL fix for Sybase 12.0 installation directory 
+	changes.
+	Applied patch from Tim Ayers to allow 0x type formatting for
+	binary data fetches (similar to what Sybase::CTlib and 
+	Sybase::DBlib allow).
+	Fixed some t/ scripts to not fail when run against MS-SQL.
+	Corrected the handling of timeout events in the client
+	callback.
+
+	Bug Fixes:
+
+	349: CS_NUMERIC bindings for ?-style placeholders fails for large 
+             values.
+       	345: Dynamic statement ids get re-used.
+	351: prepared statements with placeholders cause handle to become 
+	     unusable if *first* execute fails.
+	352: ping() doesn't work right in Apache::DBI (thanks to
+	     Kiriakos Georgiou)
+	353: syb_quoted_identifier doesn't work.
+	354: Calling fetch() after prepare() but no execute() fails with 
+	     internal DBI error. This should also fix bug # 278 and 288.
+	297: type_info() returns incorrect or no data.
+	344: timeout doesn't work correctly.
 
 Release 0.23
 
@@ -42,29 +76,19 @@ Release 0.23
 	255: $dbh->execute does not fail it executing proc without
 	     permissions.
 
-Release 0.22
-
-	Bug Fixes:
-
-	271: execute() does not restart a transaction after a rollback
-             or commit when running multiple execute() calls for the 
-	     same statement handle.
-	294: SEGV on executing a prepared statement with undef values.
-	295: SEGV due to printf w/ null pointer
-	299: Missing dTHR in syb_st_prepare().
-
-
 
 
 Building:
 
 This version attempts to find out which libraries it needs by looking
-at $SYBASE/lib. This behaviour is experimental, and will only work
+at $SYBASE/lib ($SYBASE/$SYBASE_OCS/lib for ASE 12.x installations.) 
+This behaviour is experimental, and will only work
 on Unix and VMS systems (ie on Win32 you still have to edit the CONFIG
 file the old way), but appears to work fine on the two systems I have
 access to (Sybase 11.5/Solaris 7 & Sybase 11.0.3.3/linux) and on Sybase
 10.0.2.3/OpenVMS AXP 7.1. It assumes that $SYBASE is set and points to 
-the Sybase installation directory that you want to use to build DBD::Sybase.
+the Sybase installation directory that you want to use to build 
+DBD::Sybase.
 
 Start by editing the PWD file to set a valid user, password and server
 for the test scripts to use.
@@ -154,9 +178,6 @@ I have a simple bug tracking database at http://gw.peppler.org/cgi-bin/bug.cgi
 You can use it to check for known problems, and to report new ones. Keep
 in mind that peppler.org lives on the end of a K56 dialup line, so it
 may be slow.
-
-
-Let me repeat: this is ALPHA software - testing has been minimal!!!
 
 See perldoc DBD::Sybase for details about the package.
 

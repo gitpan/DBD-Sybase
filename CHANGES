@@ -1,4 +1,34 @@
-$Id: CHANGES,v 1.21 2000/09/01 18:35:40 mpeppler Exp $
+$Id: CHANGES,v 1.22 2000/11/06 18:59:09 mpeppler Exp $
+
+Release 0.90
+
+        Release number sequence change: I'm dropping the "alpha" qualifier
+        and I expect to release 1.00 fairly soon.
+
+	Small Makefile.PL fix for Sybase 12.0 installation directory 
+	changes.
+	Applied patch from Tim Ayers to allow 0x type formatting for
+	binary data fetches (similar to what Sybase::CTlib and 
+	Sybase::DBlib allow).
+	Fixed some t/ scripts to not fail when run against MS-SQL.
+	Corrected the handling of timeout events in the client
+	callback.
+
+	Bug Fixes:
+
+	349: CS_NUMERIC bindings for ?-style placeholders fails for large 
+             values.
+       	345: Dynamic statement ids get re-used.
+	351: prepared statements with placeholders cause handle to become 
+	     unusable if *first* execute fails.
+	352: ping() doesn't work right in Apache::DBI (thanks to
+	     Kiriakos Georgiou)
+	353: syb_quoted_identifier doesn't work.
+	354: Calling fetch() after prepare() but no execute() fails with 
+	     internal DBI error. This should also fix bug # 278 and 288.
+	297: type_info() returns incorrect or no data.
+	344: timeout doesn't work correctly.
+
 
 Release 0.23
 

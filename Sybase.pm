@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.23 2000/09/01 18:28:03 mpeppler Exp $
+# $Id: Sybase.pm,v 1.24 2000/11/06 18:58:54 mpeppler Exp $
 
 # Copyright (c) 1996,1997,1998,1999,2000   Michael Peppler
 #
@@ -22,8 +22,8 @@
 		 CS_STATUS_RESULT CS_MSG_RESULT CS_COMPUTE_RESULT);
 
 
-    $VERSION = '0.23';
-    my $Revision = substr(q$Revision: 1.23 $, 10);
+    $VERSION = '0.90';
+    my $Revision = substr(q$Revision: 1.24 $, 10);
 
     require_version DBI 1.02;
 
@@ -156,9 +156,8 @@
 	my $dbh = shift;
 	my $sth = $dbh->prepare("select * from sysusers where 1=2");
 	
-	if($sth->execute < 0) {
-	    return 0 if(DBD::Sybase::db::_isdead($dbh));
-	}
+	return 0 if(!defined($sth->execute) && DBD::Sybase::db::_isdead($dbh));
+
 	$sth->finish;
 	return 1;
     }
@@ -166,77 +165,66 @@
     sub type_info_all {
 	my ($dbh) = @_;
 
+# Calling sp_datatype_info returns the appropriate data for the server that
+# we are currently connected to.
+# In general the data is static, so it's not really necessary, but ASE 12.5
+# introduces some changes, in particular char/varchar max lenghts of 2048...
+#	my $sth = $dbh->prepare("sp_datatype_info");
+	my $data;
+#	if($sth->execute) {
+#	    $data = $sth->fetchall_arrayref;
+#	} else {
+	    $data = [
+       ['bit',-7,1,undef,undef,undef,'0','0',2,undef,'0',undef,'bit',undef,undef,undef,undef,undef,undef],
+       ['tinyint',-6,3,undef,undef,undef,1,'0',2,1,'0','0','tinyint',undef,undef,undef,undef,undef,undef],
+       ['image',-4,'2147483647','0x',undef,undef,1,'0',1,undef,'0',undef,'image',undef,undef,undef,undef,undef,undef],
+       ['timestamp',-3,8,'0x',undef,undef,1,'0',2,undef,'0',undef,'timestamp',undef,undef,undef,undef,undef,undef],
+       ['varbinary',-3,255,'0x',undef,'maxlength',1,'0',2,undef,'0',undef,'varbinary',undef,undef,undef,undef,undef,undef],
+       ['binary',-2,255,'0x',undef,'length',1,'0',2,undef,'0',undef,'binary',undef,undef,undef,undef,undef,undef],
+       ['text',-1,'2147483647','\'','\'',undef,1,1,1,undef,'0',undef,'text',undef,undef,undef,undef,undef,undef],
+       ['char',1,255,'\'','\'','length',1,1,3,undef,'0',undef,'char',undef,undef,undef,undef,undef,undef],
+       ['nchar',1,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nchar',undef,undef,undef,undef,undef,undef],
+       ['numeric',2,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','numeric','0',38,undef,undef,undef,undef],
+       ['decimal',3,38,undef,undef,'precision,scale',1,'0',2,'0','0','0','decimal','0',38,undef,undef,undef,undef],
+       ['money',3,19,'\$',undef,undef,1,'0',2,'0',1,'0','money',undef,undef,undef,undef,undef,undef],
+       ['smallmoney',3,10,'\$',undef,undef,1,'0',2,'0',1,'0','smallmoney',undef,undef,undef,undef,undef,undef],
+       ['int',4,10,undef,undef,undef,1,'0',2,'0','0','0','int',undef,undef,undef,undef,undef,undef],
+       ['smallint',5,5,undef,undef,undef,1,'0',2,'0','0','0','smallint',undef,undef,undef,undef,undef,undef],
+       ['float',6,15,undef,undef,undef,1,'0',2,'0','0','0','float',undef,undef,undef,undef,10,undef],
+       ['real',7,7,undef,undef,undef,1,'0',2,'0','0','0','real',undef,undef,undef,undef,10,undef],
+       ['datetime',11,23,'\'','\'',undef,1,'0',3,undef,'0',undef,'datetime',undef,undef,93,undef,undef,undef],
+       ['smalldatetime',11,16,'\'','\'',undef,1,'0',3,undef,'0',undef,'smalldatetime',undef,undef,93,undef,undef,undef],
+       ['nvarchar',12,255,'\'','\'',undef,1,1,3,undef,'0',undef,'nvarchar',undef,undef,undef,undef,undef,undef],
+       ['sysname',12,30,'\'','\'','maxlength',1,1,3,undef,'0',undef,'sysname',undef,undef,undef,undef,undef,undef],
+       ['varchar',12,255,'\'','\'','maxlength',1,1,3,undef,'0',undef,'varchar',undef,undef,undef,undef,undef,undef]
+		    ];
+#	}
 	my $ti = 
-	[
-     {   TYPE_NAME         => 0,
-	 DATA_TYPE         => 1,
-	 PRECISION         => 2,
-	 LITERAL_PREFIX    => 3,
-	 LITERAL_SUFFIX    => 4,
-	 CREATE_PARAMS     => 5,
-	 NULLABLE          => 6,
-	 CASE_SENSITIVE    => 7,
-	 SEARCHABLE        => 8,
-	 UNSIGNED_ATTRIBUTE=> 9,
-	 MONEY             => 10,
-	 AUTO_INCREMENT    => 11,
-	 LOCAL_TYPE_NAME   => 12,
-	 MINIMUM_SCALE     => 13,
-	 MAXIMUM_SCALE     => 14,
-     },
-	 [ 'tinyint', SQL_TINYINT,
-	   undef, "", "", undef, 1, 0, 2, 1, 0, 0, undef, undef, undef
-	 ],
-	 [ 'smallint', SQL_SMALLINT,
-	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
-	 ],
-	 [ 'int', SQL_INTEGER,
-	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
-	 ],
-	 [ 'integer', SQL_INTEGER,
-	   undef, "", "", undef, 1, 0, 2, 0, 0, 0, undef, undef, undef
-	 ],
-	 [ 'numeric', SQL_NUMERIC,
-	   38, "", "", "precision,scale", 1, 0, 2, 0, 0, 0, undef, 0, 38
-	 ],
-	 [ 'decimal', SQL_DECIMAL,
-	   38, "", "", "precision,scale", 1, 0, 2, 0, 0, 0, undef, 0, 38
-	 ],
-	 [ 'float', SQL_FLOAT,
-	   8, "", "", "precision", 1, 0, 2, 0, 0, 0, undef, 4, 8
-	 ],
-	 [ 'double', SQL_DOUBLE,
-	   8, "", "", undef, 1, 0, 2, 0, 0, 0, undef, 8, 8
-	 ],
-	 [ 'real', SQL_REAL,
-	   4, "", "", undef, 1, 0, 2, 0, 0, 0, undef, 4, 4
-	 ],
-	 [ 'smallmoney', SQL_NUMERIC,
-	   4, "", "", undef, 1, 0, 2, 0, 1, 0, undef, 4, 4
-	 ],
-	 [ 'money', SQL_NUMERIC,
-	   8, "", "", undef, 1, 0, 2, 0, 1, 0, undef, 8, 8
-	 ],
-	 [ 'char', SQL_CHAR,
-	   255, "'", "'", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
-	 ],
-	 [ 'varchar', SQL_VARCHAR,
-	   255, "'", "'", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
-	 ],
-	 [ 'binary', SQL_BINARY,
-	   255, "", "", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
-	 ],
-	 [ 'varbinary', SQL_VARBINARY,
-	   255, "", "", "max length", 1, 1, 3, 0, 0, 0, undef, 1, 255
-	 ],
-	 [ 'text', SQL_LONGVARCHAR,
-	   2147483647, "'", "'", undef, 1, 1, 3, 0, 0, 0, undef, undef, undef
-	 ],
-	 [ 'image', SQL_LONGVARBINARY,
-	   2147483647, "", "", undef, 1, 1, 3, 0, 0, 0, undef, undef, undef
-	 ],
+	[     {   TYPE_NAME         => 0,
+		  DATA_TYPE         => 1,
+		  PRECISION         => 2,
+		  LITERAL_PREFIX    => 3,
+		  LITERAL_SUFFIX    => 4,
+		  CREATE_PARAMS     => 5,
+		  NULLABLE          => 6,
+		  CASE_SENSITIVE    => 7,
+		  SEARCHABLE        => 8,
+		  UNSIGNED_ATTRIBUTE=> 9,
+		  MONEY             => 10,
+		  AUTO_INCREMENT    => 11,
+		  LOCAL_TYPE_NAME   => 12,
+		  MINIMUM_SCALE     => 13,
+		  MAXIMUM_SCALE     => 14,
+		  sql_data_type     => 15,
+		  sql_datetime_sub  => 16,
+		  num_prec_radix    => 17,
+		  interval_precision => 18,
+	      },
 	];
-
+#	foreach (@$data) {
+#	    push(@$ti, $_);
+#	}
+	push(@$ti, @$data);
 
 	return $ti;
     }
@@ -599,9 +587,6 @@ duplicate insert to fail, for example.
 
 =item syb_err_handler (subroutine ref)
 
-B<Note:> The syntax for the error handler is experimental and
-may change in future versions.
-
 This attribute is used to set an ad-hoc error handler callback (ie a perl 
 subroutine) that gets called before the normal error handler does it's job.
 If this subroutine returns 0 then the error is ignored. This is useful
@@ -618,7 +603,7 @@ server name and procedure name are always undef.
 
 Example:
 
-    %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6225);
+    %showplan_msgs = map { $_ => 1}  (3612 .. 3615, 6201 .. 6299, 10201 .. 10299);
     sub err_handler {
         my($err, $sev, $state, $line, $server, $proc, $msg) = @_;
 
@@ -691,6 +676,11 @@ those that are created after setting it. To change the behavior of
 an existing $sth handle use $sth->{syb_do_proc_status}.
 
 The default is for this attribute to be B<off>.
+
+=item syb_use_bin_0x
+
+If set, BINARY and VARBINARY values are prefixed with '0x'
+in the result. The default is off.
 
 =item syb_oc_version (string)
 
