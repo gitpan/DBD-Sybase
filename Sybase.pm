@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.85 2004/12/19 09:52:39 mpeppler Exp $
+# $Id: Sybase.pm,v 1.86 2005/04/09 09:02:35 mpeppler Exp $
 
-# Copyright (c) 1996-2004   Michael Peppler
+# Copyright (c) 1996-2005   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.05';
-    my $Revision = substr(q$Revision: 1.85 $, 10);
+    $VERSION = '1.05_01';
+    my $Revision = substr(q$Revision: 1.86 $, 10);
 
     require_version DBI 1.30;
 
@@ -87,7 +87,7 @@
 
         my($this) = DBI::_new_dbh($drh, {
 	    'Name' => $server,
-	    'User' => $user,	
+	    'Username' => $user,	
 	    'CURRENT_USER' => $user,
 	    });
 
@@ -291,11 +291,11 @@
 	$sth;
     }
 
-    sub begin_work {
-        my $dbh = shift;
-
-	return $dbh->STORE('AutoCommit', 0);
-    }
+#    sub begin_work {
+#        my $dbh = shift;
+#
+#	return $dbh->STORE('AutoCommit', 0);
+#    }
 
     sub ping {
 	my $dbh = shift;

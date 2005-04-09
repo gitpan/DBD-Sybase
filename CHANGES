@@ -1,4 +1,11 @@
-$Id: CHANGES,v 1.67 2004/12/15 07:37:55 mpeppler Exp $
+$Id: CHANGES,v 1.68 2005/04/09 09:02:35 mpeppler Exp $
+
+Release 1.06
+
+	Fix off-by-one error for ISO date format.
+	Clear error/warning when connecting to a Replication Server.
+        Fix AutoCommit "off" behavior when CHAINED mode is turned off.
+        Fix $dbh->begin_work() behavior.
 
 Release 1.05
 

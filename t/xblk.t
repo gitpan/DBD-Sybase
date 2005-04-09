@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: xblk.t,v 1.7 2004/11/26 10:37:21 mpeppler Exp $
+# $Id: xblk.t,v 1.8 2005/04/09 09:02:35 mpeppler Exp $
 #
 #
 # Small BLK test script for DBD::Sybase
@@ -35,7 +35,7 @@ $SIG{__WARN__} = sub { print @_; };
 
 DBD::Sybase::set_cslib_cb(\&cslib_cb);
 
-#DBI->trace(3);
+#DBI->trace(5);
 
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db;bulkLogin=1", 
 		       $Uid, $Pwd, 

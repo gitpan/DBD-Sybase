@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.33 2004/12/16 12:06:01 mpeppler Exp $
+   $Id: dbdimp.h,v 1.34 2005/04/09 09:02:35 mpeppler Exp $
 
-   Copyright (c) 1997-2004  Michael Peppler
+   Copyright (c) 1997-2005  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -60,6 +60,7 @@ struct imp_dbh_st {
     int	      useBin0x;
     int       binaryImage;
     int       dateFmt;		/* 0 for Sybase native, 1 for ISO8601 */
+    int       optSupported;     /* 0 if the server doesn't support ct_options() */
 
     int lasterr;
     int lastsev;

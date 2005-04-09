@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# $Id: autocommit.t,v 1.3 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: autocommit.t,v 1.4 2005/04/09 09:02:35 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -11,7 +11,7 @@ use _test;
 
 use strict;
 
-use Test::More tests => 5;
+use Test::More tests => 6;
 #use Test::More qw(no_plan);
 
 BEGIN { use_ok('DBI');
@@ -59,6 +59,17 @@ while(my $d = $sth->fetch) {
     ++$found;
 }
 ok($found == 4, 'Commit');
+
+# Add some tests to validate the begin_work() functionality
+$dbh->{AutoCommit} = 1;
+
+$dbh->begin_work;
+$dbh->do("insert #ttt values('a string', 1)");
+$dbh->do("insert #ttt values('another string', 2)");
+$dbh->do("insert #ttt values('foodiboo', 3)");
+$dbh->do("insert #ttt values('a string', 4)");
+$dbh->commit;
+ok($dbh->{AutoCommit} == 1, "begin_work");
 
 $dbh->disconnect;
 

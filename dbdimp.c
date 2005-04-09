@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.79 2004/12/16 12:06:01 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.80 2005/04/09 09:02:35 mpeppler Exp $
 
-   Copyright (c) 1997-2004  Michael Peppler
+   Copyright (c) 1997-2005  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -1460,6 +1460,27 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
     }
 
+    /* Check to see if the server supports the ct_option() call */
+    if(!imp_dbh->optSupported) {
+	CS_BOOL val;
+	CS_RETCODE ret = ct_capability(connection, CS_GET, 
+				       CS_CAP_REQUEST,
+				       CS_OPTION_GET, (CS_VOID*)&val);
+	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> checking for ct_option support (ret = %d, val = %d)\n", ret, val);
+	if(ret != CS_SUCCEED || val == CS_FALSE)
+	  imp_dbh->optSupported = 0;
+	else
+	  imp_dbh->optSupported = 1;
+	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> ct_option is %ssupported\n", imp_dbh->optSupported == 1 ?"":"not ");
+    }
+
+    if(!imp_dbh->optSupported) {
+      imp_dbh->chainedSupported = 0;
+      imp_dbh->doRealTran = 1;	/* XXX ??? */
+    }
+
     if(imp_dbh->database[0] || imp_dbh->curr_db[0]) {
 	int ret = syb_db_use(imp_dbh, connection);
 	if(imp_dbh->failedDbUseFatal && ret < 0) {
@@ -1616,7 +1637,8 @@ static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    get_server_version() -> ct_results(%d)\n", 
 			  restype);
 	if(restype == CS_CMD_FAIL) {
-	    warn("DBD::Sybase - can't get server version\n");
+	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    get_server_version() -> Can't get version value\n");
 	    retval = -1;
 	}
 	if(restype == CS_ROW_RESULT) {
@@ -2021,6 +2043,13 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	if (DBIc_ACTIVE_KIDS(imp_dbh)) {
 	    croak("panic: can't set AutoCommit with active statement handles");
 	}
+
+	if(imp_dbh->imp_sth && imp_dbh->imp_sth->bcpFlag) {
+	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_STORE(): AutoCommit value changes inhibitted during BCP ops\n");
+	    return TRUE;
+	}
+
 
 	on = SvTRUE(valuesv);
 	ret = toggle_autocommit(dbh, imp_dbh, on);
@@ -2709,6 +2738,10 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_sth->statement = NULL;
     dbd_preparse(imp_sth, statement);
     imp_dbh->sql = imp_sth->statement;
+
+    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
+	if(syb_db_opentran(NULL, imp_dbh) == 0)
+	    return -2; 
 	
     if((int)DBIc_NUM_PARAMS(imp_sth)) {
 	/* regular dynamic sql */
@@ -3530,10 +3563,6 @@ syb_st_execute(sth, imp_sth)
     if(imp_sth->type == 2) {
 	return syb_blk_execute(imp_dbh, imp_sth, sth);
     }
-
-    if(!DBIc_is(imp_dbh, DBIcf_AutoCommit) && imp_dbh->doRealTran)
-	if(syb_db_opentran(NULL, imp_dbh) == 0)
-	    return -2; 
 
     if(!imp_sth->exec_done) {
 	if(cmd_execute(sth, imp_sth) != 0) {
@@ -4450,7 +4479,7 @@ date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 	if(type == 2) {
 	    sprintf(buff, "%4.4d-%2.2d-%2.2dT%2.2d:%2.2d:%2.2d.%3.3dZ",
 		    rec.dateyear,
-		    rec.datemonth,
+		    rec.datemonth + 1,
 		    rec.datedmonth,
 		    rec.datehour,
 		    rec.dateminute,
@@ -4459,7 +4488,7 @@ date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 	} else {
 	    sprintf(buff, "%4.4d-%2.2d-%2.2d %2.2d:%2.2d:%2.2d.%3.3d",
 		    rec.dateyear,
-		    rec.datemonth,
+		    rec.datemonth + 1,
 		    rec.datedmonth,
 		    rec.datehour,
 		    rec.dateminute,

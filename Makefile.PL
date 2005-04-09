@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.40 2004/11/25 13:36:12 mpeppler Exp $
+# $Id: Makefile.PL,v 1.41 2005/04/09 09:02:35 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -99,6 +99,10 @@ sub configure {
     }
 
     $SYBASE = VMS::Filespec::unixify($SYBASE) if $^O eq 'VMS';
+    if($^O eq 'darwin') {
+	my $osxdir = 'Applications/Sybase/System';
+	$SYBASE = $osxdir if -d $SYBASE && -d $osxdir;
+    }
 
     # System 12.0 has a different directory structure...
     if(defined($ENV{SYBASE_OCS})) {
@@ -142,6 +146,9 @@ sub configure {
         $lib_string = "-L$SYBASE/lib -lct -lcs -lblk";
         $inc_string .= " -D_MSC_VER=800";
     } else {
+	# Supplied by Erick Calder. I'm not sure why libsybsrv is needed...
+	$attr{EXTRA_LIBS} .= " -lsybsrv" if $^O eq 'darwin';
+
 	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS}, $version);
 	if($file) {
 	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl -lblk $attr{EXTRA_LIBS} -ldl -lm";
