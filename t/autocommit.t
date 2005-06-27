@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# $Id: autocommit.t,v 1.4 2005/04/09 09:02:35 mpeppler Exp $
+# $Id: autocommit.t,v 1.5 2005/06/27 18:04:18 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -11,7 +11,7 @@ use _test;
 
 use strict;
 
-use Test::More tests => 6;
+use Test::More tests => 9;
 #use Test::More qw(no_plan);
 
 BEGIN { use_ok('DBI');
@@ -70,6 +70,16 @@ $dbh->do("insert #ttt values('foodiboo', 3)");
 $dbh->do("insert #ttt values('a string', 4)");
 $dbh->commit;
 ok($dbh->{AutoCommit} == 1, "begin_work");
+
+# Test to check for problems with non-chained mode.
+$dbh->{syb_chained_txn} = 0;
+$dbh->{AutoCommit} = 0;
+$sth = $dbh->prepare("select 5");
+ok($sth, "Non-chained prepare");
+my $rc = $sth->finish;
+ok($rc, "Finish");
+$rc = $dbh->commit;
+ok($rc, "commit");
 
 $dbh->disconnect;
 

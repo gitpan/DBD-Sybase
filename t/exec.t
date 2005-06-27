@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: exec.t,v 1.7 2004/12/19 09:52:39 mpeppler Exp $
+# $Id: exec.t,v 1.8 2005/06/27 18:04:18 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -10,7 +10,9 @@ use _test;
 
 use strict;
 
-use Test::More tests => 17; #qw(no_plan);
+#use Test::More qw(no_plan);
+use Test::More tests => 22;
+
 
 BEGIN { use_ok('DBI', ':sql_types');
         use_ok('DBD::Sybase');}
@@ -114,6 +116,45 @@ $rc = $sth->execute(undef, 0, 3.2234, "jan 3 2001", 5.4);
 ok(defined($rc), "execute fail mode 6");
 get_all_results($sth);
 
+
+$dbh->do("drop proc dbitest");
+
+$dbh->do("if object_id('dbitest') != NULL drop proc dbitest");
+$rc = $dbh->do(qq{
+create proc dbitest \@one varchar(20), \@two int, \@three numeric(5,2), \@four smalldatetime --, \@five float = null output
+as
+    select \@one, \@two, \@three, \@four
+
+});
+
+ok(defined($rc), "$rc (create proc)\n");
+
+$sth = $dbh->prepare("exec dbitest ?, ?, ?, ?");
+$sth->bind_param(1, 'String 1', SQL_VARCHAR);
+$sth->bind_param(2, 1, SQL_INTEGER);
+$sth->bind_param(3, 3.25, SQL_DECIMAL);
+$sth->bind_param(4, '2005-06-27', SQL_DATETIME);
+
+for (0 .. 1) {
+    $sth->execute('String 1', 1, 3.25, '2005-06-27');
+    while(my $row = $sth->fetch) {
+	ok($row->[2] == 3.25, "Implicit finish handling");
+    }
+}
+
+$dbh->{syb_do_proc_status} = 1;
+$sth = $dbh->prepare("exec dbitest ?, ?, ?, ?");
+$sth->bind_param(1, 'String 1', SQL_VARCHAR);
+$sth->bind_param(2, 1, SQL_INTEGER);
+$sth->bind_param(3, 3.25, SQL_DECIMAL);
+$sth->bind_param(4, '2005-06-27', SQL_DATETIME);
+
+for (0 .. 1) {
+    $sth->execute('String 1', 1, 3.25, '2005-06-27');
+    while(my $row = $sth->fetch) {
+	ok($row->[2] == 3.25, "Implicit finish handling");
+    }
+}
 
 $dbh->do("drop proc dbitest");
 

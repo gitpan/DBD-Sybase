@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.80 2005/04/09 09:02:35 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.82 2005/06/27 18:04:18 mpeppler Exp $
 
    Copyright (c) 1997-2005  Michael Peppler
 
@@ -97,6 +97,7 @@ static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt);
 static int cmd_execute(SV *sth, imp_sth_t *imp_sth);
 static CS_BINARY *to_binary(char *str, int *outlen);
 static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con);
+static void clear_cache(SV *sth);
 
 static CS_INT BLK_VERSION;
 
@@ -875,7 +876,7 @@ void syb_init(dbistate)
     if(retcode == CS_SUCCEED) {
 	if((retcode = cs_config(context, CS_SET, CS_LOC_PROP, locale, 
 				CS_UNUSED, NULL)) != CS_SUCCEED) {
-		warn("cs_config(CS_LOC_PROP) failed");
+	    /* warn("cs_config(CS_LOC_PROP) failed"); */
 	}
     }
 }
@@ -1611,12 +1612,14 @@ static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con)
     CS_INT     restype;
     char       statement[60];
     char       buff[255];
-    char       version[20];
+    char       version[sizeof(imp_dbh->serverVersion)];
     int        retval = 0;
     char       *db;
 
     if(!cmd)
 	return -1;
+
+    memset(version, 0, sizeof(imp_dbh->serverVersion));
 
     sprintf(statement, "select @@version");
 
@@ -1643,20 +1646,23 @@ static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con)
 	}
 	if(restype == CS_ROW_RESULT) {
 	    CS_DATAFMT datafmt;
-	    CS_INT len = 250;
+	    CS_INT len;
 	    CS_SMALLINT indicator;
 	    CS_INT retcode;
 	    CS_INT rows;
 
 	    ct_describe(cmd, 1, &datafmt);
 	    datafmt.format = CS_FMT_NULLTERM;
+	    datafmt.maxlength = sizeof(buff);
 	    ct_bind(cmd, 1, &datafmt, buff, &len, &indicator);
 	    while((retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows)) == CS_SUCCEED) {
 		if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    get_server_version() -> version = %s\n", buff);
-		strncpy(imp_dbh->serverVersionString, buff, 250);
+		strncpy(imp_dbh->serverVersionString, buff, 
+			sizeof(imp_dbh->serverVersion));
 		extract_version(buff, version);
-		strncpy(imp_dbh->serverVersion, version, 14);
+		strncpy(imp_dbh->serverVersion, version, 
+			sizeof(imp_dbh->serverVersion));
 		if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    get_server_version() -> version = %s\n", imp_dbh->serverVersion);
 	    }
@@ -2780,9 +2786,13 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	}
 	    
 	imp_sth->cmd = NULL;
+	/* Early execution has some unwanted side effects - disabling
+	   it in 1.05_02. */
+#if 0
 	if(cmd_execute(sth, imp_sth) != 0) {
 	    return 0;
 	}
+#endif
 
 	ret = CS_SUCCEED;
     }    
@@ -3106,26 +3116,8 @@ st_next_result(sth, imp_sth)
 	  case CS_CURSOR_RESULT:
 	  case CS_COMPUTE_RESULT:
 	      if(imp_sth->done_desc) {
-		  HV *hv = (HV*)SvRV(sth);
-		  HE *he;
-
 		  cleanUp(imp_sth);
-		  
-		  hv_iterinit(hv);
-		  while((he = hv_iternext(hv))) {
-		      I32 i;
-		      char *key = hv_iterkey(he, &i);
-		      SV *sv = hv_iterval(hv, he);
-
-		      if(strnEQ(key, "NAME", 4)) {
-			  if(DBIc_DBISTATE(imp_dbh)->debug >= 4)
-			      PerlIO_printf(DBIc_LOGPIO(imp_dbh), 
-			       "    st_next_result() -> delete key %s (%s) from cache\n",
-					    key, neatsvpv(sv, 0));
-
-			  hv_delete(hv, key, i, G_DISCARD);
-		      }
-		  }
+		  clear_cache(sth);
 	      }
 	      retcode = describe(imp_sth, restype);
 	      if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
@@ -3603,6 +3595,10 @@ static int fix_fbav(imp_sth_t *imp_sth, int num_fields, AV *av)
 {
     int clear_cache = 0;
     int i;
+    D_imp_dbh_from_sth;
+
+     if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+ 	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    fix_fbav() -> num_fields = %d, numCols = %d\n", num_fields, imp_sth->numCols);
 
     /* XXX
        The code in the if() below is likely to break with new versions
@@ -3675,9 +3671,14 @@ syb_st_fetch(sth, imp_sth)
     av = DBIc_DBISTATE(imp_dbh)->get_fbav(imp_sth);
     num_fields = AvFILL(av)+1;
 
+    /* fix_fbav will extend the AV* as necessary, using the imp_sth->numCols
+       value as the reference */
     if(fix_fbav(imp_sth, num_fields, av))
 	clear_cache(sth);
 
+    /* Use the actual number of fields... XXX */
+    num_fields = DBIc_NUM_FIELDS(imp_sth);
+ 
     ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
 
   TryAgain:
@@ -4309,11 +4310,18 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
     if (par->len <= 0)
 	return Nullsv;
 
+    /* NUM_OF_PARAMS is handled by DBI, and the answer is available
+       even if done_desc is not set. Hence we need to handle this here
+       rather than in the switch() below. Fixes PR 591, patch
+       supplied by machj@ders.cz */
+    if (par - S_st_fetch_params == 0)
+        return Nullsv;    /* handled by DBI */ 
+
     if (!imp_sth->done_desc && (par - S_st_fetch_params) < 10) {
 	/* Because of the way Sybase returns information on returned values
 	   in a SELECT statement we can't call describe() here. */
 	/* Changed Nullsv to PL_sv_undef here to fix PR 541. */
-	return &PL_sv_undef; 
+	return Nullsv; 
     }
 
     i = DBIc_NUM_FIELDS(imp_sth);

@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: main.t,v 1.15 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: main.t,v 1.16 2005/06/27 18:04:18 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -9,7 +9,8 @@ use _test;
 
 use strict;
 
-use Test::More tests=>29; #qw(no_plan);
+use Test::More tests=>33; 
+#use Test::More qw(no_plan);
 
 use Data::Dumper;
 
@@ -151,6 +152,32 @@ SKIP: {
     ok($desc[0]->{TYPE} == 8, 'describe TYPE');
 }
 
+$sth = $dbh->prepare(q|select suid, suser_name(suid), cpu, physical_io
+from master..sysprocesses
+order by suid
+compute sum(cpu), sum(physical_io) by suid
+		       |
+);
+
+ok($sth, "Prepare compute");
+$rc = $sth->execute;
+ok($rc, "execute compute");
+my $compute_size = 2;
+my $row_size = 4;
+while(my $row = $sth->fetch) {
+    local $^W = 0;
+    print "$sth->{syb_result_type}: @$row\n";
+    if($sth->{syb_result_type}==4040 && @$row != 4) {
+	$row_size = @$row;
+    }
+    if($sth->{syb_result_type}==4045 && @$row != 2) {
+	$compute_size = @$row;
+    }
+}
+ok($row_size == 4, "compute - regular row size ($row_size should be 4)");
+ok($compute_size == 2, "compute - compute row size ($compute_size should be 2)");
+
+$sth->finish;
 
 $dbh->disconnect;
 
