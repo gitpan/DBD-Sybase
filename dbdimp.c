@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.82 2005/06/27 18:04:18 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.83 2005/07/23 10:17:47 mpeppler Exp $
 
    Copyright (c) 1997-2005  Michael Peppler
 
@@ -2046,16 +2046,18 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     if (kl == 10 && strEQ(key, "AutoCommit")) {
 	int ret;
 
-	if (DBIc_ACTIVE_KIDS(imp_dbh)) {
-	    croak("panic: can't set AutoCommit with active statement handles");
-	}
-
+	/* Move the check for ACTIVE_KIDS below the check for the bcp flag
+	   as that inhibits the setting of the autocommit variable anyway.
+	*/
 	if(imp_dbh->imp_sth && imp_dbh->imp_sth->bcpFlag) {
 	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_STORE(): AutoCommit value changes inhibitted during BCP ops\n");
 	    return TRUE;
 	}
 
+	if (DBIc_ACTIVE_KIDS(imp_dbh)) {
+	    croak("panic: can't set AutoCommit with active statement handles");
+	}
 
 	on = SvTRUE(valuesv);
 	ret = toggle_autocommit(dbh, imp_dbh, on);
@@ -2803,6 +2805,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     imp_sth->doProcStatus = imp_dbh->doProcStatus;
 
     DBIc_on(imp_sth, DBIcf_IMPSET);
+
     if(!imp_sth->connection) {
 	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), 
@@ -2810,7 +2813,10 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
 	imp_dbh->inUse = 1;
     }
 
-/*    DBIc_ACTIVE_on(imp_sth); */
+
+    /* Re-enable the active flag here (in 1.05_03) to fix bug with
+       finish not getting called correctly */
+    DBIc_ACTIVE_on(imp_sth);
 
     return 1;
 }
@@ -5303,6 +5309,7 @@ static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
 	imp_sth->bcpAutoCommit = DBIc_is(imp_dbh, DBIcf_AutoCommit);
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, 0);
     }
+
 
     return ret;
 }
