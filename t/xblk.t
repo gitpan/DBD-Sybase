@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: xblk.t,v 1.8 2005/04/09 09:02:35 mpeppler Exp $
+# $Id: xblk.t,v 1.9 2005/08/05 18:22:10 mpeppler Exp $
 #
 #
 # Small BLK test script for DBD::Sybase
@@ -172,7 +172,7 @@ sub test4 {
 						 identity_column => 0 }});
   ok(!defined($sth), 'Prepare #4');
   print $dbh->errstr, "\n";
-#  DBI->trace(4);
+#  DBI->trace(5);
   my $sth1 = $dbh->prepare("select * from #tmp where foo = ?",
 			   { syb_bcp_attribs => { identity_flag => 1, 
 						  identity_column => 0 }});
@@ -217,8 +217,6 @@ sub test5 {
 sub test6 {
   my $dbh = shift;
 
-#  DBI->trace(4);
-
   $dbh->begin_work;
 
   my $sth = $dbh->prepare("insert #tmp values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -245,6 +243,7 @@ sub test6 {
   ok($rc, 'test 6 finish');
   $sth = undef;
 
+  $dbh->begin_work;
   my $sth2 = $dbh->prepare("select count(*) from #tmp where a1 like 'test6 %'");
   ok(defined($sth2), 'test 6 prepare select');
   $rc = $sth2->execute;
@@ -281,6 +280,8 @@ sub test6 {
   $rc = $sth->finish;
   ok($rc, 'test 6 finish');
   $sth = undef;
+
+#  DBI->trace(0);
 }
 
 sub test7 {
@@ -289,6 +290,7 @@ sub test7 {
   $dbh->{AutoCommit} = 1;
 
   # Test some of the data in the #tmp table.
+
 
   my $sth = $dbh->prepare("select count(*), sum(i), sum(n) from #tmp");
   ok(defined($sth), 'prepare test 7');

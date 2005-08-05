@@ -1,4 +1,4 @@
-$Id: CHANGES,v 1.70 2005/07/23 12:04:37 mpeppler Exp $
+$Id: CHANGES,v 1.71 2005/08/05 18:22:10 mpeppler Exp $
 
 Release 1.06
 
@@ -6,17 +6,19 @@ Release 1.06
 	Clear error/warning when connecting to a Replication Server.
         Fix AutoCommit "off" behavior when CHAINED mode is turned off.
         Fix $dbh->begin_work() behavior.
+
+        Note: This version fails 4 tests in t/xblk.t when building
+        against the 15.0 Beta OCS libraries.
         
         Bug Fixes
 
+	582 - ISO date formatting off by one for months.
 	591 - NUM_OF_PARAMS isn't handled properly
         593 - Connection can become unusable due a bug in 
               get_server_version().
 	597 - Prepared stored procs with placeholders return
 	      corrupted recordset on second fetch.
         599 - The call to "prepare" also executes the statement.
-	600 - $sth->finish after prepare() but before execute() doesn't
-              do anything.
 
 Release 1.05
 
