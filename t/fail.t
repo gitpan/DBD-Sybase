@@ -1,6 +1,6 @@
 #!/usr/local/bin/perl
 #
-# $Id: fail.t,v 1.8 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: fail.t,v 1.9 2005/10/01 13:05:13 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -22,6 +22,15 @@ use vars qw($Pwd $Uid $Srv $Db);
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0, syb_flush_finish => 1});
 
 ok(defined($dbh), 'Connect');
+
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 12) {
+	ok(0);
+    }
+    exit(0);
+}
+
 
 my $rc;
 #DBI->trace(4);

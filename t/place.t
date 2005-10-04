@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: place.t,v 1.7 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: place.t,v 1.8 2005/10/01 13:05:13 mpeppler Exp $
 
 use lib 't';
 use _test;
@@ -18,6 +18,13 @@ my ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
 ok($dbh, 'Connect');
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 13) {
+	ok(0);
+    }
+    exit(0);
+}
 
 SKIP: {
     skip "?-style placeholders aren't supported with this SQL Server", 10 unless $dbh->{syb_dynamic_supported};

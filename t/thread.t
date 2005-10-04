@@ -1,5 +1,5 @@
 #!perl -w
-# $Id: thread.t,v 1.4 2004/01/08 18:57:32 mpeppler Exp $
+# $Id: thread.t,v 1.5 2005/10/01 13:05:13 mpeppler Exp $
 # Test support for threads in DBD::Sybase.
 
 use strict;
@@ -102,6 +102,14 @@ sub test_it {
 sub getDbh {
     my $dbname = shift || 'master';
     my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$dbname;timeout=60;loginTimeout=20", $Uid, $Pwd, {PrintError => 1});
+
+    if(!$dbh) {
+	warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+	for (4 .. 10) {
+	    ok(0);
+	}
+	exit(0);
+    }
 
     return $dbh;
 }

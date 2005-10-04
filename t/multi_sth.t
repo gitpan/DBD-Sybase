@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: multi_sth.t,v 1.2 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: multi_sth.t,v 1.3 2005/10/01 13:05:13 mpeppler Exp $
 #
 #
 # Multiple sth on single dbh test.
@@ -25,6 +25,13 @@ my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db",
 			AutoCommit => 1,});
 
 ok(defined($dbh), 'Connect');
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 43) {
+	ok(0);
+    }
+    exit(0);
+}
 
 test1($dbh);
 test2($dbh);

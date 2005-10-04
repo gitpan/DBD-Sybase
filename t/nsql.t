@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: nsql.t,v 1.4 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: nsql.t,v 1.5 2005/10/01 13:05:13 mpeppler Exp $
 
 use lib 't';
 use _test;
@@ -20,6 +20,14 @@ BEGIN { use_ok('DBI');
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {syb_deadlock_retry=>10, syb_deadlock_verbose=>1});
 #exit;
 ok($dbh, 'Connect');
+
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 7) {
+	ok(0);
+    }
+    exit(0);
+}
 
 my @d = $dbh->func("select * from sysusers", 'ARRAY', 'nsql');
 ok(@d >= 1, 'array');

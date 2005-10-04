@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: main.t,v 1.16 2005/06/27 18:04:18 mpeppler Exp $
+# $Id: main.t,v 1.17 2005/10/01 13:05:13 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -31,6 +31,13 @@ print "Available Drivers: ",join(", ",DBI->available_drivers()),"\n";
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
 
 ok(defined($dbh), 'Connect');
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 33) {
+	ok(0);
+    }
+    exit(0);
+}
 
 print "Connect to server version: ", $dbh->{syb_server_version}, "\n";
 

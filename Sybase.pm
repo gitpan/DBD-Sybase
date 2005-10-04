@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.89 2005/08/05 18:22:10 mpeppler Exp $
+# $Id: Sybase.pm,v 1.90 2005/10/01 13:05:13 mpeppler Exp $
 
 # Copyright (c) 1996-2005   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.06';
-    my $Revision = substr(q$Revision: 1.89 $, 10);
+    $VERSION = '1.07';
+    my $Revision = substr(q$Revision: 1.90 $, 10);
 
     require_version DBI 1.30;
 
@@ -308,7 +308,8 @@
 
 	my $rc = $sth->execute;
 	
-	return 0 if(!defined($rc) && DBD::Sybase::db::_isdead($dbh));
+	# Changed && to || for 1.07.
+	return 0 if(!defined($rc) || DBD::Sybase::db::_isdead($dbh));
 
 	$sth->finish;
 	return 1;

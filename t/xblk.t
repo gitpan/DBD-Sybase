@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: xblk.t,v 1.9 2005/08/05 18:22:10 mpeppler Exp $
+# $Id: xblk.t,v 1.10 2005/10/01 13:05:13 mpeppler Exp $
 #
 #
 # Small BLK test script for DBD::Sybase
@@ -37,7 +37,9 @@ DBD::Sybase::set_cslib_cb(\&cslib_cb);
 
 #DBI->trace(5);
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db;bulkLogin=1", 
+my $charset = get_charset($Srv, $Uid, $Pwd);
+
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db;charset=$charset;bulkLogin=1", 
 		       $Uid, $Pwd, 
 		       {PrintError=>1,
 			AutoCommit => 1,});
@@ -46,6 +48,15 @@ my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db;bulkLogin=1",
 #						 return 0}});
 
 ok(defined($dbh), 'Connect');
+
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 62) {
+	ok(0);
+    }
+    exit(0);
+}
+
 
 my $rc = $dbh->do("create table #tmp(x numeric(9,0) identity, a1 varchar(20), i int null, n numeric(6,2), d datetime, s smalldatetime, mn money, mn1 smallmoney, b varbinary(8), img image null)");
 
@@ -346,4 +357,38 @@ sub test8 {
   
 #  $sth->finish;
   $sth = undef;
+}
+
+sub get_charset {
+    my $srv = shift;
+    my $uid = shift;
+    my $pwd = shift;
+
+    my $dbh = DBI->connect("dbi:Sybase:server=$srv", $uid, $pwd);
+    die "Can't connect to $srv" unless $dbh;
+
+    my $sth = $dbh->prepare("sp_configure 'default character set id'");
+    $sth->execute;
+    my $id;
+    while(my $r = $sth->fetch) {
+	$id = $r->[4];
+    }
+    $sth->finish;
+    if(!$id) {
+	warn "Can't find charset id - using iso_1";
+	return 'iso_1';
+    }
+
+    $sth = $dbh->prepare("select name from master..syscharsets where id = $id");
+    $sth->execute;
+    my $charset;
+    while(my $r = $sth->fetch) {
+	$charset = $r->[0];
+    }
+    if(!defined($charset)) {
+	warn "Can't find charset name - using iso_1";
+	return 'iso_1';
+    }
+
+    return $charset;
 }

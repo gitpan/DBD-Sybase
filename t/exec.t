@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: exec.t,v 1.8 2005/06/27 18:04:18 mpeppler Exp $
+# $Id: exec.t,v 1.9 2005/10/01 13:05:13 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -29,6 +29,15 @@ use vars qw($Pwd $Uid $Srv $Db);
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError=>1});
 #exit;
 ok(defined($dbh), 'Connect');
+
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 22) {
+	ok(0);
+    }
+    exit(0);
+}
+
 
 $SIG{__WARN__} = sub { print @_; };
 my $sth = $dbh->prepare("exec sp_helpindex \@objname = ?");

@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: xblob.t,v 1.10 2004/12/19 09:52:39 mpeppler Exp $
+# $Id: xblob.t,v 1.11 2005/10/01 13:05:13 mpeppler Exp $
 
 use lib 't';
 
@@ -21,6 +21,14 @@ BEGIN { use_ok('DBI');
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError=>1});
 #exit;
 ok($dbh, 'Connect');
+
+if(!$dbh) {
+    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
+    for (4 .. 11) {
+	ok(0);
+    }
+    exit(0);
+}
 
 $dbh->do("if object_id('blob_test') != NULL drop table blob_test");
 my $rc = $dbh->do("create table blob_test(id int, data image null, foo varchar(30))");
@@ -78,7 +86,7 @@ while(my $d = $sth->fetch) {
 
 ok($heximg eq $heximg2, 'Images are the same');
 
-mkdir("./tmp");
+mkdir("./tmp", 0755);
 open(ONE, ">./tmp/hex1");
 binmode(ONE);
 print ONE $heximg;

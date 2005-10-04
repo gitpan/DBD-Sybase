@@ -1,4 +1,19 @@
-$Id: CHANGES,v 1.71 2005/08/05 18:22:10 mpeppler Exp $
+$Id: CHANGES,v 1.72 2005/10/01 13:05:13 mpeppler Exp $
+
+Release 1.07
+
+	Changed the t/xblk.t test to lookup the charset used by the 
+        server and specify this in the connect() string. This should
+        avoid failures when the client and server uses charsets of
+        different sizes (utf8 vs. iso_1, for example).
+	Better error reporting when the connection data is incorrect 
+	for the test scripts.
+	Modified $dbh->ping() slightly.
+
+        Bug Fixes
+
+	604 - Add missing mode parameter to mkdir in t/xblob.t
+	606 - Memory leak in the BLK API.
 
 Release 1.06
 
@@ -19,6 +34,8 @@ Release 1.06
 	597 - Prepared stored procs with placeholders return
 	      corrupted recordset on second fetch.
         599 - The call to "prepare" also executes the statement.
+        600 - $sth->finish sometimes fails to properly clean up the
+              handle.
 
 Release 1.05
 

@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.83 2005/07/23 10:17:47 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.84 2005/10/01 13:05:13 mpeppler Exp $
 
    Copyright (c) 1997-2005  Michael Peppler
 
@@ -88,7 +88,7 @@ static void syb_set_error(imp_dbh_t *, int, char *);
 static char *my_strdup _((char *));
 static void fetchKerbTicket(imp_dbh_t *imp_dbh);
 static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth);
-static void blkCleanUp(imp_sth_t *imp_sth);
+static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh);
 static int getTableName(char *statement, char *table, int maxwidth);
 static int toggle_autocommit(SV *dbh, imp_dbh_t *imp_dbh, int flag);
 static int date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
@@ -1778,6 +1778,8 @@ static int syb_blk_done(imp_sth_t *imp_sth, CS_INT type)
 	return 1;
     }
     ret = blk_done(imp_sth->bcp_desc, type, &imp_sth->numRows);
+    if(DBIc_DBISTATE(imp_sth)->debug >= 4)
+	PerlIO_printf(DBIc_LOGPIO(imp_sth), "    syb_blk_done -> blk_done(%d, %d, %d) = %d\n", imp_sth->bcp_desc, type, imp_sth->numRows, ret);
 
     /* reset row counter if blk_done was successful */
     if(ret == CS_SUCCEED) {
@@ -3363,10 +3365,17 @@ static void * alloc_datatype(CS_INT datatype, int *len)
     case CS_DATE_TYPE: bytes = sizeof(CS_DATE); break;
     case CS_TIME_TYPE: bytes = sizeof(CS_TIME); break;
 #endif
+#if defined(CS_BIGINT_TYPE)
+    case CS_BIGINT_TYPE: bytes = sizeof(CS_BIGINT); break;
+    case CS_USMALLINT_TYPE: bytes = sizeof(CS_USMALLINT); break;
+    case CS_UINT_TYPE: bytes = sizeof(CS_UINT); break;
+    case CS_UBIGINT_TYPE: bytes = sizeof(CS_UBIGINT); break;
+#endif
     default: warn("alloc_datatype: unkown type: %d", datatype); return NULL;
     }
 
     Newz(902, ptr, bytes, char);
+    *len = bytes;
 
     return ptr;
 }
@@ -3858,7 +3867,7 @@ static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
     } else if (imp_sth->bcpRows == 0)
 	syb_blk_done(imp_sth, CS_BLK_ALL);
 
-    blkCleanUp(imp_sth);
+    blkCleanUp(imp_sth, imp_dbh);
     /* Reset autocommit for this handle (see syb_blk_init()) */
     DBIc_set(imp_dbh, DBIcf_AutoCommit, imp_sth->bcpAutoCommit);
     toggle_autocommit(NULL, imp_dbh, imp_sth->bcpAutoCommit);
@@ -5301,7 +5310,7 @@ static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
 
  FAIL:;
     if(ret != CS_SUCCEED)
-	blkCleanUp(imp_sth);
+	blkCleanUp(imp_sth, imp_dbh);
     else {
 	imp_dbh->imp_sth = imp_sth; /* hack! */
 	/* Turn off autocommit for this handle, mainly to silence
@@ -5314,7 +5323,7 @@ static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
     return ret;
 }
 
-static void blkCleanUp(imp_sth_t *imp_sth)
+static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh)
 {
     int i;
 
@@ -5329,7 +5338,9 @@ static void blkCleanUp(imp_sth_t *imp_sth)
     imp_sth->datafmt = NULL;
 
     if(imp_sth->bcp_desc) {
-	blk_drop(imp_sth->bcp_desc);
+	CS_INT ret = blk_drop(imp_sth->bcp_desc);
+	if (DBIc_DBISTATE(imp_dbh)->debug >= 4)
+	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    blkCleanUp -> blk_drop(%d) = %d\n", imp_sth->bcp_desc, ret);
 	imp_sth->bcp_desc = NULL;
     }
 }
