@@ -1,8 +1,8 @@
-$Id: README,v 1.24 2004/12/19 09:58:06 mpeppler Exp $
+$Id: README,v 1.26 2007/04/10 15:43:25 mpeppler Exp $
 	
 	   DBD::Sybase  --  a Sybase DBI driver for Perl 5.
 
-   Copyright (c) 1996-2004  Michael Peppler
+   Copyright (c) 1996-2007  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -16,10 +16,7 @@ DBI module, latest release. DBI is available from CPAN, in
     "CPAN"/authors/id/TIMB/DBI-1.xx-tar.gz
 
 The Sybase OpenClient libraries are of course available from Sybase.
-For Linux you can get the full Sybase ASE 11.0.3.3 release for free
-(this includes the server and the client libraries.)
-See http://linux.sybase.com for details, or my homepage 
-(http://www.mbay.net/~mpeppler).
+See http://www.sybase.com or http://www.peppler.org for details.
 
 An alternative is to use the FreeTDS reimplementation of Client Library.
 With FreeTDS DBD::Sybase can be used to query a MS-SQL 7 or 2000
@@ -32,8 +29,8 @@ DBD::Sybase is a reasonably complete implementation of the DBI spec, but
 there are still some features that are missing. Please see the DBD::Sybase
 man page for details.
 
-The full write-ups of the bugs that are listed below as "fixed" can be
-seen at http://www.peppler.org/cgi-bin/bug.cgi.
+The full write-ups of the bugs that are listed in the CHANGES file as "fixed" 
+can be seen at http://www.peppler.org/bugdb
 
 Getting Help
 ============
@@ -52,130 +49,33 @@ If after seaching you still don't find any solution then post a question
 sybperl-l@peppler.org or freetds@lists.ibiblio.org (only use the
 latter if you use the FreeTDS libraries with DBD::Sybase).
 
-
-Recent changes:
-
-Release 1.05
-
-        BEHAVIOR CHANGE - $dbh->{LongReadLen} must now be called
-	before $dbh->prepare(). Previously you could call this after
-	the $dbh->prepare() but before the $sth->execute().
-
-        Install private statement handle methods for TEXT/IMAGE handling
-        to avoid $h->func() calls, and update documentation.
-        Implement experimental BLK API via prepare/execute loop.
-	Change default "AutoCommit" off mode from explicit transactions
-	to using the "chained" mode if it is available.
-	Add $sth->syb_describe() call, taken from Sybase::CTlib's 
-	ct_describe().
-	Add ISO8601 date/time format for output.
-	Fix $sth->finish() behavior when syb_flush_finish is turned on.
-	Changed do { } while($sth->{syb_more_results}); idiom to use
-	redo instead.
-	Better/more consistent handling of multiple sth on a single dbh,
-        and new test file.
-
-	Bugs Fixed:
-
-	580 - Binding binary/varbinary values to placeholders sometimes
-	      fails.
-	575 - Fails three tests under Tru-64.
-	577 - perl Makefile.PL fails if umask is 0.
-        578 - Better warning for calling $dbh->{LongReadLen} if $dbh is busy.
-        572 - Minor documentation update for bind_param().
-
-Release 1.04
-
-	Bugs Fixed:
-
-	566 - $sth->{NAME} fails right after prepare().
-
-Release 1.03
-
-	Added linking of threaded Sybase libs if perl is built with
-	threading turned on.
-	Added CLONE() method.
-	Minor changes to dbdimp.c to be thread-safe.
-	Added t/thread.t test script.
-	Changes to Makefile.PL to make configuration easier.
-	Add support for Kerberos-based network login.
-
-Release 1.02
-
-	Added syb_server_version attribute. This is filled in at connect()
-        time with the numeric version number (11.0.3.3, 12.5.1, etc) of the
-        server that you are connected to.
-
-	Bugs Fixed:
-
-	520 - t/exec.t fails on Win32.
-	533 - logic error in deadlock retry in nsql().
-	532 - t/xblob.t test provides false positive for win32.
-	534 - Placeholder prepare() fails with ASE 11.0.x
-
-Release 1.01
-
-	Automatically finish() statement handles if they are re-executed
-        before all the rows have been fetched.
-	Added support for new tables() syntax, thanks to Stephen Wilcoxon.
-	Added support for DATE and TIME datatypes (available in the 
-	ASE 12.5.1 release, currently undergoing beta testing).
-	Allow user to specify a database to use for the tests instead of 
-	using "tempdb" (useful if user does not have SA privileges).
-	
-	Bugs Fixed:
-
-	517 - getpwnam() isn't portable.
-	493 - Second execute on a prepared handle fails.
-	487 - Add connection information to error messages.
-	407 - Second+ statement does not use db from "use database".
-
-Release 1.00
-
-	Removed "beta" tag!
-	Added data_sources().
-        Allow "SQL_BINARY" placeholder parameters to be passed either
-        as a hex string (with or without leading 0x), or as raw binary
-        data.
-
-	Bugs Fixed:
-
-	477 - segfault when servermsg_cb is called with a null connection
-	480 - Makefile.PL searches system dirs before PERL5LIB dirs when 
-              looking for DBI installation.
-	485 - Incorrect handling of large varbinary columns on fetches.
-	489 - (same as 497, see below).
-	492 - Can't compile on Win2k.
-	494 - Do not try to use the ocs.cfg file if it exists.
-	495 - Incorrect handling of parameters when using placeholders &
-              stored procs.
-        497 - implicit type conversions with prepared statements often fail
-	503 - Binary placeholders with stored procedures.
-	506 - Default scriptName/hostname connect() params.
-	508 - DBD::Sybase doesn't build under Win2k.
-
-
-
+For recent changes please see the CHANGES file.
 
 Building:
+---------
+
+Make sure that the SYBASE environment variable points to the Sybase
+installation that you want to use for this build. The easiest way
+to do this is to source the SYBASE.sh/SYBASE.csh or SYBASE.bat file
+in the root directory of the Sybase installation you want to use.
 
 This version attempts to find out which libraries it needs by looking
 at $SYBASE/lib ($SYBASE/$SYBASE_OCS/lib for ASE 12.x installations.) 
-This behaviour is experimental, and will only work
-on Unix and VMS systems (ie on Win32 you still have to edit the CONFIG
-file the old way), but appears to work fine on the two systems I have
-access to (Sybase 12.0/Solaris 7 & Sybase 12.5/linux) and on Sybase
-10.0.2.3/OpenVMS AXP 7.1. It assumes that $SYBASE is set and points to 
+This behaviour works on Unix and VMS systems, but on Win32 you still
+have to edit the CONFIG file the old way). 
+It assumes that $SYBASE is set and points to 
 the Sybase installation directory that you want to use to build 
 DBD::Sybase, and will also use the value of $SYBASE_OCS if it is set.
 
-Make sure that the SYBASE environment variable points to the Sybase
-installation that you want to use for this build.
-
 Then run 
 	perl Makefile.PL
+You will be prompted to choose build options (chained mode for AutoCommit, 
+threaded libraries when using a threaded perl) and for server/user/pwd
+to use for the "make test" step.
+
 If there were warnings about missing libraries, go to the manual 
 configuration, below.
+
 Run
 	make
 If the make failed, go to the manual configuration, below.
@@ -186,6 +86,7 @@ If this succeeds you can install the package, via
 (which you probably have to run as root.)
 
 Manual Configuration:
+---------------------
 
 If the automatic configuration fails, then you will have to edit the
 CONFIG file, and set the EXTRA_LIBS entry according to your OS and
@@ -215,6 +116,17 @@ Run perl Makefile.PL, make, make test.
 
 If everything's fine, run "make install" to move the files to your 
 installed perl library tree.
+
+Automated build with no prompts:
+--------------------------------
+
+You can run Makefile.PL with command line arguments to accept defaults
+and build DBD::Sybase in an automated manner (without prompts).
+
+The syntax is:
+
+perl Makefile.PL --accept_test_defaults --chained {Y, N} --threaded_libs {Y, N}
+
 
 
 Known Problems:
@@ -258,7 +170,7 @@ NOTE: t/fail.t will *fail* on test #8 if you are connecting to
       obscure constraint violation condition - read the code if
       you are interested.
 
-I have a simple bug tracking database at http://www.peppler.org/cgi-bin/bug.cgi
+I have a simple bug tracking database at http://www.peppler.org/bugdb
 You can use it to check for known problems, and to report new ones.
 
 See perldoc DBD::Sybase for details about the package.

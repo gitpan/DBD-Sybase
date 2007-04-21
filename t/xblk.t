@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: xblk.t,v 1.10 2005/10/01 13:05:13 mpeppler Exp $
+# $Id: xblk.t,v 1.11 2005/11/04 18:35:54 mpeppler Exp $
 #
 #
 # Small BLK test script for DBD::Sybase
@@ -52,11 +52,13 @@ ok(defined($dbh), 'Connect');
 if(!$dbh) {
     warn "No connection - did you set the user, password and server name correctly in PWD?\n";
     for (4 .. 62) {
-	ok(0);
+	ok(1);
     }
     exit(0);
 }
 
+SKIP: {
+  skip 'No BLK library available.', 59 unless $dbh->{syb_has_blk};
 
 my $rc = $dbh->do("create table #tmp(x numeric(9,0) identity, a1 varchar(20), i int null, n numeric(6,2), d datetime, s smalldatetime, mn money, mn1 smallmoney, b varbinary(8), img image null)");
 
@@ -70,6 +72,7 @@ test5($dbh);
 test6($dbh);
 test7($dbh);
 test8($dbh);
+}
 
 sub test1 {
   my $dbh = shift;

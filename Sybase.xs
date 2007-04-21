@@ -1,7 +1,7 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.16 2004/07/23 06:51:45 mpeppler Exp $
-   Copyright (c) 1997-2004 Michael Peppler
+/* $Id: Sybase.xs,v 1.17 2007/04/10 15:42:21 mpeppler Exp $
+   Copyright (c) 1997-2007 Michael Peppler
 
    Uses from Driver.xst
    Copyright (c) 1994,1995,1996,1997  Tim Bunce
@@ -74,6 +74,14 @@ _date_fmt(dbh, fmt)
     CODE:
     D_imp_dbh(dbh);
     ST(0) = syb_db_date_fmt(dbh, imp_dbh, fmt) ? &sv_yes : &sv_no;
+
+void
+ping(dbh)
+    SV *	dbh
+    CODE:
+    D_imp_dbh(dbh);
+    ST(0) = sv_2mortal(newSViv(syb_ping(dbh, imp_dbh)));
+
 
 MODULE = DBD::Sybase    PACKAGE = DBD::Sybase::st
 

@@ -1,6 +1,6 @@
-/* $Id: Sybase.h,v 1.12 2004/12/16 12:06:01 mpeppler Exp $
+/* $Id: Sybase.h,v 1.14 2007/04/11 17:27:29 mpeppler Exp $
 
-   Copyright (c) 1997 - 2004 Michael Peppler
+   Copyright (c) 1997 - 2007 Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -10,6 +10,8 @@
 
 
 #define NEED_DBIXS_VERSION 93
+
+#define PERL_NO_GET_CONTEXT
 
 #include <DBIXS.h>		/* installed by the DBI module	*/
 #include "dbivport.h"

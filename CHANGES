@@ -1,4 +1,31 @@
-$Id: CHANGES,v 1.72 2005/10/01 13:05:13 mpeppler Exp $
+$Id: CHANGES,v 1.80 2007/04/19 18:31:18 mpeppler Exp $
+
+Release 1.08
+
+	Detect missing libblk.a library, and disable the BLK api calls
+	if necessary.
+	Added code to force dlopen() to use RTLD_GLOBAL.
+	Corrected ct_option() functionality detection.
+	Fixed incorrect handling of bind_params() (Thanks to Tim Bunce).
+	Added serverType DSN parameter.
+	Added tds_keepalive DSN parameter.
+	Fixed incorrect handling of multiple result sets with DBI
+	1.53 and later.
+	Re-wrote $dbh->ping() in C, it's now four times faster.
+	Allow automated build without prompts.
+	Improved nsql().
+	Added corrected handling of DATE and TIME values (ASE 12.5.2 and later).
+	Added handling of UNSIGNED INT and BIGINT (ASE 15 and later).
+	Added PERL_NO_GET_CONTEXT #define.
+
+        Bug Fixes
+	
+	624 - Empty strings incorrectly passed as NULL.
+	616 - Spurious error message when the login request times out.
+	614 - Documentation improvement for syb_xxx methods.
+	610 - Segfault when using signals with the threaded libraries and
+	      perl >= 5.8.
+
 
 Release 1.07
 

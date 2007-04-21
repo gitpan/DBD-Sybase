@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.84 2005/10/01 13:05:13 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.96 2007/04/19 18:31:19 mpeppler Exp $
 
-   Copyright (c) 1997-2005  Michael Peppler
+   Copyright (c) 1997-2007  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -15,9 +15,6 @@
 
 #if defined(op)
 #undef op
-#endif
-#if !defined(dTHR)
-#define dTHR	extern int errno
 #endif
 
 #if !defined(PATCHLEVEL)
@@ -72,7 +69,7 @@ static char *GetAggOp _((CS_INT));
 static CS_INT get_cwidth _((CS_DATAFMT *));
 static CS_INT display_dlen _((CS_DATAFMT *));
 static CS_RETCODE display_header _((imp_dbh_t *, CS_INT, CS_DATAFMT*));
-static CS_RETCODE describe _((imp_sth_t *, int));
+static CS_RETCODE describe _((SV *sth, imp_sth_t *, int));
 static CS_RETCODE fetch_data _((imp_dbh_t *, CS_COMMAND*));
 static CS_RETCODE CS_PUBLIC clientmsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_CLIENTMSG*));
 static CS_RETCODE CS_PUBLIC servermsg_cb _((CS_CONTEXT*, CS_CONNECTION*, CS_SERVERMSG*));
@@ -91,13 +88,22 @@ static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth);
 static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh);
 static int getTableName(char *statement, char *table, int maxwidth);
 static int toggle_autocommit(SV *dbh, imp_dbh_t *imp_dbh, int flag);
-static int date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
+static int datetime2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
+			char *buff, CS_INT len, int type, CS_LOCALE *locale);
+#if defined(CS_DATE_TYPE)
+static int date2str(CS_DATE *dt, CS_DATAFMT *srcfmt, 
 		    char *buff, CS_INT len, int type, CS_LOCALE *locale);
+static int time2str(CS_TIME *dt, CS_DATAFMT *srcfmt, 
+		    char *buff, CS_INT len, int type, CS_LOCALE *locale);
+#endif
 static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt);
 static int cmd_execute(SV *sth, imp_sth_t *imp_sth);
-static CS_BINARY *to_binary(char *str, int *outlen);
+static CS_BINARY *to_binary(char *str, STRLEN *outlen);
 static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con);
-static void clear_cache(SV *sth);
+static void clear_cache(SV *sth, imp_sth_t *imp_sth);
+
+static int _dbd_rebind_ph(SV *sth, imp_sth_t *imp_sth, phs_t *phs, int maxlen);
+
 
 static CS_INT BLK_VERSION;
 
@@ -117,12 +123,25 @@ static char *ocVersion;
 
 static SV *cslib_cb;
 
-static void
-syb_set_error(imp_dbh, err, errstr)
-imp_dbh_t *imp_dbh;
-int        err;
-char      *errstr;
+static int
+syb_set_options(imp_dbh_t *imp_dbh, CS_INT action, CS_INT option,
+		CS_VOID *value, CS_INT len, CS_INT *outlen)
 {
+  if (DBIc_DBISTATE(imp_dbh)->debug >= 5)
+    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_set_options: optSupported = %d\n",
+		  imp_dbh->optSupported);
+
+  if(!imp_dbh->optSupported)
+    return CS_FAIL;
+
+  return ct_options(imp_dbh->connection, action, option, value, len, outlen);
+}
+
+
+static void
+syb_set_error(imp_dbh_t *imp_dbh, int err, char *errstr)
+{
+    dTHX;
     sv_setiv(DBIc_ERR(imp_dbh), err);
     if(SvOK(DBIc_ERRSTR(imp_dbh))) 
 	sv_catpv(DBIc_ERRSTR(imp_dbh), errstr);
@@ -133,6 +152,7 @@ char      *errstr;
 static CS_RETCODE CS_PUBLIC
 cslibmsg_cb(CS_CONTEXT *context, CS_CLIENTMSG *errmsg)
 {
+    dTHX;
 
 #if 0
     if(DBIS->debug >= 4) {
@@ -193,11 +213,10 @@ cslibmsg_cb(CS_CONTEXT *context, CS_CLIENTMSG *errmsg)
 }
 
 static CS_RETCODE CS_PUBLIC
-clientmsg_cb(context, connection, errmsg)
-CS_CONTEXT	*context;
-CS_CONNECTION	*connection;	
-CS_CLIENTMSG	*errmsg;
+clientmsg_cb(CS_CONTEXT *context, CS_CONNECTION *connection, 
+	     CS_CLIENTMSG *errmsg)
 {
+    dTHX;
     imp_dbh_t *imp_dbh = NULL;
     char buff[255];
 
@@ -303,12 +322,25 @@ CS_CLIENTMSG	*errmsg;
 	    CS_NUMBER(errmsg->msgnumber) == 63 &&
 	    CS_ORIGIN(errmsg->msgnumber) == 2 &&
 	    CS_LAYER(errmsg->msgnumber) == 1) {
+	  CS_INT status;
+
+	  status = 0;
+	  if (ct_con_props(connection, CS_GET, CS_LOGIN_STATUS,
+			   (CS_VOID *)&status,
+			   CS_UNUSED, NULL) != CS_SUCCEED) {
+	    imp_dbh->isDead = 1;
+	    return CS_FAIL;
+	  }
+	  if (!status) {
+	    /* We're not logged in, so just return CS_FAIL to abort
+	       the login request */
+	    imp_dbh->isDead = 1;
+	    return CS_FAIL;
+	  }
 	    if(ct_cancel(connection, NULL, CS_CANCEL_ATTN) == CS_FAIL) {
-/*		ct_close(connection, CS_FORCE_CLOSE);   XXX */
 		imp_dbh->isDead = 1;
 		return CS_FAIL;
 	    }	  
-/*	    imp_dbh->isDead = 1;	 XXX */
 	    return CS_SUCCEED;
 	}
     } else {			/* !connection */
@@ -328,15 +360,14 @@ CS_CLIENTMSG	*errmsg;
 }
 
 static CS_RETCODE CS_PUBLIC
-servermsg_cb(context, connection, srvmsg)
-CS_CONTEXT	*context;
-CS_CONNECTION	*connection;
-CS_SERVERMSG	*srvmsg;
+servermsg_cb(CS_CONTEXT *context, CS_CONNECTION *connection, 
+	     CS_SERVERMSG *srvmsg)
 {
     CS_COMMAND	*cmd;
     CS_RETCODE	retcode;
     imp_dbh_t *imp_dbh = NULL;
     char buff[1024];
+    dTHX;
 
 
     /* add check on connection not being NULL (PR/477)
@@ -403,6 +434,15 @@ CS_SERVERMSG	*srvmsg;
 	}
 	return CS_SUCCEED;
     }
+
+    /* Trap msg 17001 (No SRV_OPTION handler installed.) */
+    if(imp_dbh && srvmsg->msgnumber == 17001) {
+      imp_dbh->optSupported = 0;
+      if(DBIc_DBISTATE(imp_dbh)->debug >= 4) {
+	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    servermsg_cb() -> ct_option is %ssupported\n", imp_dbh->optSupported == 1 ?"":"not ");
+      }
+    }
+
 
     if(imp_dbh && imp_dbh->err_handler) {
 	dSP;
@@ -531,8 +571,7 @@ CS_SERVERMSG	*srvmsg;
 
 
 static CS_CHAR * 
-GetAggOp(op)
-CS_INT op;
+GetAggOp(CS_INT op)
 {
     CS_CHAR *name;
 
@@ -561,8 +600,7 @@ CS_INT op;
 }
 
 static CS_INT
-get_cwidth(column)
-CS_DATAFMT *column;
+get_cwidth(CS_DATAFMT *column)
 {
     CS_INT		len;
 
@@ -633,8 +671,7 @@ CS_DATAFMT *column;
 }
 
 static CS_INT
-display_dlen(column)
-CS_DATAFMT *column;
+display_dlen(CS_DATAFMT *column)
 {
     CS_INT		len;
 
@@ -659,11 +696,9 @@ CS_DATAFMT *column;
 
 
 static CS_RETCODE
-display_header(imp_dbh, numcols, columns)
-imp_dbh_t      *imp_dbh;
-CS_INT		numcols;
-CS_DATAFMT	columns[];
+display_header(imp_dbh_t *imp_dbh, CS_INT numcols, CS_DATAFMT *columns)
 {
+    dTHX;
     CS_INT		i;
     CS_INT		l;
     CS_INT		j;
@@ -697,9 +732,9 @@ CS_DATAFMT	columns[];
 }
 
 
-void syb_init(dbistate)
-    dbistate_t *dbistate;
+void syb_init(dbistate_t *dbistate)
 {
+    dTHX;
     SV 		*sv;
     CS_INT	netio_type = CS_SYNC_IO;
     STRLEN      lna;
@@ -708,10 +743,23 @@ void syb_init(dbistate)
     CS_INT      cs_ver;
     CS_INT      boolean = CS_FALSE;
 
+    sigset_t set;
+ 
+
     DBIS = dbistate;
 
 #if PERL_VERSION >= 8 && defined(_REENTRANT)
     MUTEX_INIT (context_alloc_mutex);
+#endif
+
+#if 0
+    /* Do signal handling stuff... */
+
+    /* Set up signal set with just SIGUSR1. */
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    /* Block SIGINT */
+    sigprocmask(SIG_BLOCK, &set, NULL);
 #endif
 
 #if defined(CS_VERSION_150)
@@ -882,7 +930,7 @@ void syb_init(dbistate)
 }
 
 int 
-syb_thread_enabled()
+syb_thread_enabled(void)
 {
     int retcode = 0;
 
@@ -894,9 +942,9 @@ syb_thread_enabled()
 }
 
 int
-syb_set_timeout(timeout)
-    int		timeout;
+syb_set_timeout(int timeout)
 {
+    dTHX;
     CS_RETCODE retcode;
     if(timeout <= 0)
 	timeout = CS_NO_LIMIT;	/* set negative or 0 length timeout to 
@@ -923,11 +971,7 @@ syb_set_timeout(timeout)
 
 
 static int
-extractFromDsn(tag, source, dest, size)
-    char 	*tag;
-    char	*source;
-    char	*dest;
-    int		size;		/* avoid buffer over-runs */
+extractFromDsn(char *tag, char *source, char *dest, int size)
 {
     char *p = strstr(source, tag);
     char *q = dest;
@@ -942,11 +986,9 @@ extractFromDsn(tag, source, dest, size)
 }
 
 static int
-fetchAttrib(attribs, key)
-    SV *attribs;
-    char *key;
+fetchAttrib(SV *attribs, char *key)
 {
-/*    warn("fetching attribs for %s", key); */
+    dTHX;
     if(attribs) {
 	SV **svp;
 	if((svp = hv_fetch((HV*)SvRV(attribs), key, strlen(key), 0)) != NULL) {
@@ -957,11 +999,10 @@ fetchAttrib(attribs, key)
 }
 
 static SV *
-fetchSvAttrib(attribs, key)
-    SV *attribs;
-    char *key;
+fetchSvAttrib(SV *attribs, char *key)
 {
-/*    warn("fetching attribs for %s", key); */
+    dTHX;
+
     if(attribs) {
 	SV **svp;
 	if((svp = hv_fetch((HV*)SvRV(attribs), key, strlen(key), 0)) != NULL) {
@@ -975,6 +1016,7 @@ fetchSvAttrib(attribs, key)
 static void
 getBcpAttribs(imp_sth_t *imp_sth, SV *attribs)
 {
+    dTHX;
     SV **svp;
 #define BCP_ATTRIB "syb_bcp_attribs"
     if(!attribs || !SvOK(attribs)) {
@@ -988,15 +1030,10 @@ getBcpAttribs(imp_sth_t *imp_sth, SV *attribs)
 }
   
 int
-syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
-    SV         *dbh;
-    struct imp_dbh_st *imp_dbh;
-    char       *dsn;
-    char       *uid;
-    char       *pwd;
-    SV         *attribs;
+syb_db_login(SV *dbh, imp_dbh_t *imp_dbh, char *dsn, char *uid, 
+	     char *pwd, SV *attribs)
 {
-    dTHR;
+    dTHX;
     int retval;
 
     imp_dbh->server[0]     = 0;
@@ -1059,6 +1096,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
 	extractFromDsn("maxConnect=", dsn, imp_dbh->maxConnect, 25);
 	extractFromDsn("sslCAFile=", dsn, imp_dbh->sslCAFile, 255);
 	extractFromDsn("bulkLogin=", dsn, imp_dbh->blkLogin, 10);
+	extractFromDsn("tds_keepalive=", dsn, imp_dbh->tds_keepalive, 10);
+	extractFromDsn("serverType=", dsn, imp_dbh->serverType, 30);
     } else {
 	strncpy(imp_dbh->server, dsn, 64);
 	imp_dbh->server[63] = 0;
@@ -1091,7 +1130,8 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
     if(!retval)
 	return retval;
 
-    get_server_version(dbh, imp_dbh, imp_dbh->connection);
+    if(!imp_dbh->serverType[0] || !strncasecmp(imp_dbh->serverType, "ase", 3))
+	get_server_version(dbh, imp_dbh, imp_dbh->connection);
 
     DBIc_IMPSET_on(imp_dbh);	/* imp_dbh set up now		*/
     DBIc_ACTIVE_on(imp_dbh);	/* call disconnect before freeing*/
@@ -1102,8 +1142,7 @@ syb_db_login(dbh, imp_dbh, dsn, uid, pwd, attribs)
 }
 
 
-static CS_CONNECTION *syb_db_connect(imp_dbh)
-    struct imp_dbh_st *imp_dbh;
+static CS_CONNECTION *syb_db_connect(imp_dbh_t *imp_dbh)
 {
     dTHR;
     CS_RETCODE     retcode;
@@ -1171,51 +1210,6 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_TIMEOUT) failed");
      }
 
-#if 0
-    if(imp_dbh->locale == NULL) {
-	CS_INT type = CS_DATES_SHORT;
-
-	/* Set up the proper locale - to handle character sets, etc. */
-	if ((retcode = cs_loc_alloc( context, &locale ) != CS_SUCCEED)) {
-	    warn("cs_loc_alloc failed");
-	    return 0;
-	}
-	if (cs_locale( context, CS_SET, locale, CS_LC_ALL, (CS_CHAR*)NULL,
-		       CS_UNUSED, (CS_INT*)NULL) != CS_SUCCEED) 
-	{
-	    warn("cs_locale(CS_LC_ALL) failed");
-	    return 0;
-	}
-	if(imp_dbh->language[0] != 0) {
-	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
-		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> cs_locale(CS_SYB_LANG,%s)\n", imp_dbh->language);
-	    if (cs_locale( context, CS_SET, locale, CS_SYB_LANG, 
-			   (CS_CHAR*)imp_dbh->language, CS_NULLTERM, 
-			   (CS_INT*)NULL) != CS_SUCCEED)
-	    {
-		warn("cs_locale(CS_SYB_LANG, %s) failed", imp_dbh->language);
-		return 0;
-	    }
-	}
-	if(imp_dbh->charset[0] != 0) {
-	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
-		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> cs_locale(CS_SYB_CHARSET,%s)\n", imp_dbh->charset);
-	    if (cs_locale( context, CS_SET, locale, CS_SYB_CHARSET, 
-			   (CS_CHAR*)imp_dbh->charset, CS_NULLTERM, 
-			   (CS_INT*)NULL) != CS_SUCCEED)
-	    {
-		warn("cs_locale(CS_SYB_CHARSET, %s) failed", imp_dbh->charset);
-		return 0;
-	    }
-	}
-
-	if(cs_dt_info(context, CS_SET, locale, CS_DT_CONVFMT, CS_UNUSED, 
-		      (CS_VOID*)&type, CS_SIZEOF(CS_INT), NULL) != CS_SUCCEED)
-	    warn("cs_dt_info() failed");
-
-	imp_dbh->locale = locale;
-    }
-#else
     if(imp_dbh->language[0] != 0 || imp_dbh->charset[0] != 0) {
 	CS_INT type = CS_DATES_SHORT;
 
@@ -1262,6 +1256,21 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     } else {
 	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> using global CS_LOCALE data\n");
+    }
+
+#if defined(CS_CON_KEEPALIVE)
+    if (imp_dbh->tds_keepalive[0]) {
+	int tds_keepalive = atoi(imp_dbh->tds_keepalive);
+	
+	if (tds_keepalive != 1) {
+	    tds_keepalive = 0;
+	}
+      
+	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "syb_db_login() -> ct_config(CS_CON_KEEPALIVE,%d)\n", tds_keepalive);
+	
+	if((retcode = ct_config(context, CS_SET, CS_CON_KEEPALIVE, &tds_keepalive, CS_UNUSED, NULL)) != CS_SUCCEED)
+	    warn("ct_config(CS_SET, CS_CON_KEEPALIVE) failed");
     }
 #endif
 
@@ -1461,27 +1470,6 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    warn("ct_config(CS_SET, CS_IFILE, %s) failed", ofile);
     }
 
-    /* Check to see if the server supports the ct_option() call */
-    if(!imp_dbh->optSupported) {
-	CS_BOOL val;
-	CS_RETCODE ret = ct_capability(connection, CS_GET, 
-				       CS_CAP_REQUEST,
-				       CS_OPTION_GET, (CS_VOID*)&val);
-	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
-	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> checking for ct_option support (ret = %d, val = %d)\n", ret, val);
-	if(ret != CS_SUCCEED || val == CS_FALSE)
-	  imp_dbh->optSupported = 0;
-	else
-	  imp_dbh->optSupported = 1;
-	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
-	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> ct_option is %ssupported\n", imp_dbh->optSupported == 1 ?"":"not ");
-    }
-
-    if(!imp_dbh->optSupported) {
-      imp_dbh->chainedSupported = 0;
-      imp_dbh->doRealTran = 1;	/* XXX ??? */
-    }
-
     if(imp_dbh->database[0] || imp_dbh->curr_db[0]) {
 	int ret = syb_db_use(imp_dbh, connection);
 	if(imp_dbh->failedDbUseFatal && ret < 0) {
@@ -1498,6 +1486,9 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
     if(imp_dbh->chainedSupported) {
 	CS_BOOL value = CS_FALSE;
 
+	/* Default to ct_option supported... */
+	imp_dbh->optSupported = 1;
+
 	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> checking for chained transactions\n");
 	retcode = ct_options(connection, CS_SET, CS_OPT_CHAINXACTS, 
@@ -1506,15 +1497,34 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    imp_dbh->doRealTran = 1;
 	    imp_dbh->chainedSupported = 0;
 	}
+#if 0
+	/* This appears not to work - and hides the assignement to
+	   optSupported done in the server callback */
+
+	/* No SRV_OPTION handler on the server... */
+	if (imp_dbh->lasterr == 17001)
+	  imp_dbh->optSupported = 0;
+	else
+	  imp_dbh->optSupported = 1;
+#endif
+	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> ct_option is %ssupported\n", imp_dbh->optSupported == 1 ?"":"not ");
 	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_login() -> chained transactions are %s supported\n", retcode == CS_FAIL ? "not" : "");
     }
+
+#if 0
+    if(!imp_dbh->optSupported) {
+      imp_dbh->chainedSupported = 0;
+      imp_dbh->doRealTran = 1;	/* XXX ??? */
+    }
+#endif
 
     if(imp_dbh->connection) {
 	/* we're setting a sub-connection, so make sure that any attributes
 	   such as syb_quoted_identifier and syb_rowcount are set here too */
 
-	if(imp_dbh->quotedIdentifier) {
+	if(imp_dbh->quotedIdentifier && imp_dbh->optSupported) {
 	    CS_INT value = 1;
 	    retcode = ct_options(connection, CS_SET, CS_OPT_QUOTED_IDENT, 
 				 &value, CS_UNUSED, NULL);
@@ -1523,7 +1533,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 	    }
 	}
 #if defined(CS_OPT_ROWCOUNT)
-	if(imp_dbh->rowcount) {
+	if(imp_dbh->rowcount && imp_dbh->optSupported) {
 	    CS_INT value = imp_dbh->rowcount;
 	    retcode = ct_options(connection, CS_SET, CS_OPT_ROWCOUNT, 
 				 &value, CS_UNUSED, NULL);
@@ -1538,9 +1548,7 @@ static CS_CONNECTION *syb_db_connect(imp_dbh)
 }
 
 static int
-syb_db_use(imp_dbh, connection)
-    imp_dbh_t *imp_dbh;
-    CS_CONNECTION *connection;
+syb_db_use(imp_dbh_t *imp_dbh, CS_CONNECTION *connection)
 {
     CS_COMMAND *cmd = syb_alloc_cmd(imp_dbh, connection);
     CS_RETCODE ret;
@@ -1674,10 +1682,59 @@ static int get_server_version(SV *dbh, imp_dbh_t *imp_dbh, CS_CONNECTION *con)
     return retval;
 }
 
-int syb_db_date_fmt(dbh, imp_dbh, fmt)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
-    char *fmt;
+int syb_ping(SV *dbh, imp_dbh_t *imp_dbh)
+{
+    dTHX;
+    CS_COMMAND *cmd;
+    CS_RETCODE ret;
+    CS_INT     restype;
+    char       *statement = "/* ping */";
+
+    if(DBIc_ACTIVE_KIDS(imp_dbh)) {
+	DBIh_SET_ERR_CHAR(dbh, (imp_xxh_t *)imp_dbh, NULL, -1,
+			  "Can't call ping() with active statement handles", 
+			  NULL, NULL);
+	return -1;
+    }
+
+    DBIh_CLEAR_ERROR(imp_dbh);
+
+    cmd = syb_alloc_cmd(imp_dbh, imp_dbh->connection);
+
+    if(!cmd)
+	return 0;
+
+    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+      PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_ping() -> ct_command(%s)\n", statement);
+    ret = ct_command(cmd, CS_LANG_CMD, statement, CS_NULLTERM, CS_UNUSED);
+    if(ret != CS_SUCCEED) {
+      ct_cmd_drop(cmd);
+      return 0;
+    }
+    ret = ct_send(cmd);
+    if(ret != CS_SUCCEED) {
+      ct_cmd_drop(cmd);
+      return 0;
+    }
+    while((ret = ct_results(cmd, &restype)) == CS_SUCCEED) {
+      if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
+	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_ping() -> ct_results(%d)\n", 
+		      restype);
+      if(imp_dbh->isDead) {
+	ct_cmd_drop(cmd);
+	return 0;
+      }
+	/* Ignored - we don't care if there is a syntax error - only that
+      the communication with the server worked */
+    }
+    DBIh_CLEAR_ERROR(imp_dbh);
+
+    ct_cmd_drop(cmd);
+
+    return 1;
+}
+
+int syb_db_date_fmt(SV *dbh, imp_dbh_t *imp_dbh, char *fmt)
 {
     CS_INT type;
 
@@ -1759,14 +1816,18 @@ static int syb_get_date_fmt(imp_dbh_t *imp_dbh, char *fmt)
 }
 
 
-int      syb_discon_all(drh, imp_drh)
-    SV *drh;
-    imp_drh_t *imp_drh;
+int      syb_discon_all(SV *drh, imp_drh_t *imp_drh)
 {
     /* disconnect_all is not implemented */
     return 1;
 }
 
+#if defined(NO_BLK)
+static int syb_blk_done(imp_sth_t *imp_sth, CS_INT type)
+{
+    return 1;
+}
+#else
 static int syb_blk_done(imp_sth_t *imp_sth, CS_INT type)
 {
     CS_RETCODE ret;
@@ -1795,10 +1856,9 @@ static int syb_blk_done(imp_sth_t *imp_sth, CS_INT type)
     
     return ret == CS_SUCCEED;
 }
+#endif
 
-int      syb_db_commit(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
+int      syb_db_commit(SV *dbh, imp_dbh_t *imp_dbh)
 {
     CS_COMMAND *cmd;
     char buff[128];
@@ -1854,9 +1914,7 @@ int      syb_db_commit(dbh, imp_dbh)
     return !failFlag;
 }
 
-int      syb_db_rollback(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
+int      syb_db_rollback(SV *dbh, imp_dbh_t *imp_dbh)
 {
     CS_COMMAND *cmd;
     char buff[128];
@@ -1910,9 +1968,7 @@ int      syb_db_rollback(dbh, imp_dbh)
     return !failFlag;
 }
 
-static int syb_db_opentran(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
+static int syb_db_opentran(SV *dbh, imp_dbh_t *imp_dbh)
 {
     CS_COMMAND *cmd;
     char buff[128];
@@ -1957,11 +2013,9 @@ static int syb_db_opentran(dbh, imp_dbh)
 }
 
 
-int      syb_db_disconnect(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
+int      syb_db_disconnect(SV *dbh, imp_dbh_t *imp_dbh)
 {
-    dTHR;
+    dTHX;
     CS_RETCODE retcode;
 
     /* rollback if we get disconnected and no explicit commit
@@ -1988,9 +2042,7 @@ int      syb_db_disconnect(dbh, imp_dbh)
 }
 
 
-void     syb_db_destroy(dbh, imp_dbh)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
+void     syb_db_destroy(SV *dbh, imp_dbh_t *imp_dbh)
 {
     if (DBIc_ACTIVE(imp_dbh))
 	syb_db_disconnect(dbh, imp_dbh);
@@ -2006,12 +2058,9 @@ void     syb_db_destroy(dbh, imp_dbh)
    opened for nested statement handles correctly handle this issue */
 
 int
-syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
-    SV *keysv;
-    SV *valuesv;
+syb_db_STORE_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv, SV *valuesv)
 {
+    dTHX;
     STRLEN kl;
     int on;
     char *key = SvPV(keysv,kl);
@@ -2029,12 +2078,12 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    }
 	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_STORE() -> syb_chained_txn => %d\n", on);
-	    if(!autocommit) {
+	    if(!autocommit && imp_dbh->optSupported) {
 		CS_BOOL    value = on ? CS_TRUE : CS_FALSE;
 		CS_RETCODE ret;
-		ret = ct_options(imp_dbh->connection, CS_SET,
-				 CS_OPT_CHAINXACTS, 
-				 &value, CS_UNUSED, NULL);
+		ret = syb_set_options(imp_dbh, CS_SET,
+				      CS_OPT_CHAINXACTS, 
+				      &value, CS_UNUSED, NULL);
 		if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_db_STORE() -> syb_chained_txn AutoCommit off CS_OPT_CHAINXACTS(%d) => %d\n", value, ret);
 	    }
@@ -2046,6 +2095,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	return TRUE;
     }
     if (kl == 10 && strEQ(key, "AutoCommit")) {
+        int crnt = (DBIc_has(imp_dbh, DBIcf_AutoCommit) > 0);
 	int ret;
 
 	/* Move the check for ACTIVE_KIDS below the check for the bcp flag
@@ -2057,13 +2107,14 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    return TRUE;
 	}
 
-	if (DBIc_ACTIVE_KIDS(imp_dbh)) {
-	    croak("panic: can't set AutoCommit with active statement handles");
+	on = SvTRUE(valuesv);
+	if (DBIc_ACTIVE_KIDS(imp_dbh) && ((on && !crnt) || (!on && crnt))) {
+	    croak("panic: can't change AutoCommit (from %d to %d) with active statement handles",
+                        on, crnt);
 	}
 
-	on = SvTRUE(valuesv);
 	ret = toggle_autocommit(dbh, imp_dbh, on);
-	DBIc_set(imp_dbh, DBIcf_AutoCommit, SvTRUE(valuesv));
+	DBIc_set(imp_dbh, DBIcf_AutoCommit, on);
 	return TRUE;
     }
     if(kl == 11 && strEQ(key, "LongTruncOK")) {
@@ -2079,8 +2130,8 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    warn("Can't set LongReadLen because the database handle is in use.");
 	    return FALSE;
 	}
-	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_TEXTSIZE, 
-			 &value, CS_UNUSED, NULL);
+	ret = syb_set_options(imp_dbh, CS_SET, CS_OPT_TEXTSIZE, 
+			   &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
 	    warn("Setting of CS_OPT_TEXTSIZE failed.");
 	    return FALSE;
@@ -2099,8 +2150,8 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    return FALSE;
 	}
 
-	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_QUOTED_IDENT, 
-			 &value, CS_UNUSED, NULL);
+	ret = syb_set_options(imp_dbh, CS_SET, CS_OPT_QUOTED_IDENT, 
+			&value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
 	    warn("Setting of CS_OPT_QUOTED_IDENT failed.");
 	    return FALSE;
@@ -2167,7 +2218,7 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
 	    return FALSE;
 	}
 
-	ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_ROWCOUNT, 
+	ret = syb_set_options(imp_dbh, CS_SET, CS_OPT_ROWCOUNT, 
 			 &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED) {
 	    warn("Setting of CS_OPT_ROWCOUNT failed.");
@@ -2273,11 +2324,9 @@ syb_db_STORE_attrib(dbh, imp_dbh, keysv, valuesv)
     return FALSE;
 }
 
-SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
-    SV *dbh;
-    imp_dbh_t *imp_dbh;
-    SV *keysv;
+SV      *syb_db_FETCH_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv)
 {
+    dTHX;
     STRLEN kl;
     char *key = SvPV(keysv,kl);
     SV *retsv = NULL;
@@ -2338,7 +2387,8 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
     if (kl == 18 && strEQ(key, "syb_check_tranmode")) {
 	CS_INT value;
 	CS_RETCODE ret;
-	ret = ct_options(imp_dbh->connection, CS_GET, CS_OPT_CHAINXACTS, 
+
+	ret = syb_set_options(imp_dbh, CS_GET, CS_OPT_CHAINXACTS, 
 			 &value, CS_UNUSED, NULL);
 	if(ret != CS_SUCCEED)
 	    value = 0;
@@ -2425,6 +2475,14 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 	syb_get_date_fmt(imp_dbh, buff);
 	retsv = newSVpv(buff, 0);
     }
+    if (kl == 11 && strEQ(key, "syb_has_blk")) {
+#if defined(NO_BLK)
+	retsv = &sv_no;
+#else
+	retsv = &sv_yes;
+#endif
+    }
+
 
     if (retsv == &sv_yes || retsv == &sv_no || retsv == &PL_sv_undef)
 	return retsv;
@@ -2433,9 +2491,7 @@ SV      *syb_db_FETCH_attrib(dbh, imp_dbh, keysv)
 }
 
 static CS_COMMAND *
-syb_alloc_cmd(imp_dbh, connection) 
-    imp_dbh_t *imp_dbh;
-    CS_CONNECTION *connection;
+syb_alloc_cmd(imp_dbh_t *imp_dbh, CS_CONNECTION *connection) 
 {
     CS_COMMAND *cmd;
     CS_RETCODE retcode;
@@ -2451,10 +2507,9 @@ syb_alloc_cmd(imp_dbh, connection)
 }
 
 static void
-dbd_preparse(imp_sth, statement)
-    imp_sth_t *imp_sth;
-    char *statement;
+dbd_preparse(imp_sth_t *imp_sth, char *statement)
 {
+    dTHX;
     enum { DEFAULT, LITERAL, COMMENT, LINE_COMMENT, VARIABLE } STATES;
     int state = DEFAULT;
     int next_state;
@@ -2589,6 +2644,7 @@ dbd_preparse(imp_sth, statement)
 static CS_RETCODE 
 dyn_prepare(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, char* statement)
 {
+    dTHX;
     CS_INT restype;
     static int tt = 1; 
     int failed = 0;
@@ -2670,8 +2726,8 @@ dyn_prepare(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, char* statement)
 		phs = ((phs_t*)(void*)SvPVX(*svp));
 		ct_describe(imp_sth->cmd, i, &phs->datafmt);
 		if (DBIc_DBISTATE(imp_dbh)->debug >= 4)
-		    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    dyn_prepare: ct_describe(CS_DESCRIBE_INPUT) col %d, type %d, status %d, length %d\n",
-				  i, phs->datafmt.datatype, 
+		    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    dyn_prepare: ct_describe(CS_DESCRIBE_INPUT) col %d, type %d, name %s, status %d, length %d\n",
+				  i, phs->datafmt.datatype, phs->datafmt.name,
 				  phs->datafmt.status, phs->datafmt.maxlength);
 	    }
 	}
@@ -2688,13 +2744,9 @@ dyn_prepare(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, char* statement)
 }
 
 int      
-syb_st_prepare(sth, imp_sth, statement, attribs)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    char *statement;
-    SV *attribs;
+syb_st_prepare(SV *sth, imp_sth_t *imp_sth, char *statement, SV *attribs)
 {
-    dTHR;
+    dTHX;
     D_imp_dbh_from_sth;
     CS_RETCODE ret;
 
@@ -2823,9 +2875,7 @@ syb_st_prepare(sth, imp_sth, statement, attribs)
     return 1;
 }
 
-static int syb_st_describe_proc(imp_sth, statement)
-    imp_sth_t *imp_sth;
-    char *statement;
+static int syb_st_describe_proc(imp_sth_t *imp_sth, char *statement)
 { 
     char *buff = my_strdup(statement);
     char *tok;
@@ -2846,24 +2896,23 @@ static int syb_st_describe_proc(imp_sth, statement)
     return 1;
 }
 
-int      syb_st_rows(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+int      syb_st_rows(SV *sth, imp_sth_t *imp_sth)
 {
     return imp_sth->numRows;
 }
 
 static void
-cleanUp(imp_sth)
-    imp_sth_t *imp_sth;
+cleanUp(imp_sth_t *imp_sth)
 {
     int i;
     int numCols = DBIc_NUM_FIELDS(imp_sth);
-    for(i = 0; i < numCols; ++i)
+    for(i = 0; i < numCols; ++i) {
 	if(imp_sth->coldata[i].type == CS_CHAR_TYPE ||
 	   imp_sth->coldata[i].type == CS_TEXT_TYPE ||
-	   imp_sth->coldata[i].type == CS_IMAGE_TYPE)
+	   imp_sth->coldata[i].type == CS_IMAGE_TYPE) {
 	    Safefree(imp_sth->coldata[i].value.c);
+	}
+    }
     
     if(imp_sth->datafmt)
 	Safefree(imp_sth->datafmt);
@@ -2872,20 +2921,18 @@ cleanUp(imp_sth)
     imp_sth->numCols = 0;
     imp_sth->coldata = NULL;
     imp_sth->datafmt = NULL;
-
-    /* clear any cached data in the handle */
-    
+   
 }
 
 static CS_RETCODE
-describe(imp_sth, restype)
-    imp_sth_t *imp_sth;
-    int restype;
+describe(SV *sth, imp_sth_t *imp_sth, int restype)
 {
+    dTHX;
     D_imp_dbh_from_sth;
     CS_RETCODE retcode;
     int i;
     int numCols;
+    AV *av;
     
     if((retcode = ct_res_info(imp_sth->cmd, CS_NUMDATA,
 			      &numCols, CS_UNUSED, NULL)) != CS_SUCCEED)
@@ -2902,7 +2949,29 @@ describe(imp_sth, restype)
     if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    ct_res_info() returns %d columns\n", numCols);
 
-    DBIc_NUM_FIELDS(imp_sth) = numCols;
+    /* According to Tim Bunce I shouldn't need the code below.
+       However, if I remove it DBD::Sybase segfaults in some situations
+       with DBI < 1.53, and there are still problems with COMPUTE BY
+       statements with DBI >= 1.54. */
+    /* Adjust NUM_OF_FIELDS - which also adjusts the row buffer size */
+    DBIc_NUM_FIELDS(imp_sth) = 0; /* for DBI <= 1.53 */
+    DBIc_DBISTATE(imp_sth)->set_attr_k(sth, sv_2mortal(newSVpvn("NUM_OF_FIELDS",13)), 0,
+        sv_2mortal(newSViv(numCols))
+      );
+
+#if 1 /* for DBI <= 1.53 (and 1.54 which doesn't shrink properly) */
+    av = DBIc_FIELDS_AV(imp_sth);
+    if (av && av_len(av)+1 != numCols) {
+      SvREADONLY_off(av);		/* DBI sets this readonly  */
+      av_clear(av);
+      i = numCols;
+      while(i--) {
+        av_store(av, i, newSV(0));
+      }
+      SvREADONLY_on(av);		/* DBI sets this readonly  */
+    }
+#endif
+
     imp_sth->numCols = numCols;
     
     New(902, imp_sth->coldata, numCols, ColData);
@@ -2976,6 +3045,46 @@ describe(imp_sth, restype)
 			      &imp_sth->coldata[i].valuelen,
 			      &imp_sth->coldata[i].indicator);
 	    break;
+
+#if 1 && defined(CS_UINT_TYPE)
+	  case CS_USMALLINT_TYPE:
+	  case CS_UINT_TYPE:
+	    imp_sth->datafmt[i].maxlength = sizeof(CS_INT);
+	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
+	    imp_sth->coldata[i].type      = CS_UINT_TYPE;
+	    imp_sth->datafmt[i].datatype  = CS_UINT_TYPE;
+	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+			      &imp_sth->coldata[i].value.ui,
+			      &imp_sth->coldata[i].valuelen,
+			      &imp_sth->coldata[i].indicator);
+	    break;
+#endif
+#if 1
+#if defined(CS_BIGINT_TYPE)
+	  case CS_BIGINT_TYPE:
+	    imp_sth->datafmt[i].maxlength = sizeof(CS_BIGINT);
+	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
+	    imp_sth->coldata[i].type      = CS_BIGINT_TYPE;
+	    imp_sth->datafmt[i].datatype  = CS_BIGINT_TYPE;
+	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+			      &imp_sth->coldata[i].value.bi,
+			      &imp_sth->coldata[i].valuelen,
+			      &imp_sth->coldata[i].indicator);
+	    break;
+#endif
+#if defined(CS_UBIGINT_TYPE)
+	  case CS_UBIGINT_TYPE:
+	    imp_sth->datafmt[i].maxlength = sizeof(CS_UBIGINT);
+	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
+	    imp_sth->coldata[i].type      = CS_UBIGINT_TYPE;
+	    imp_sth->datafmt[i].datatype  = CS_UBIGINT_TYPE;
+	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+			      &imp_sth->coldata[i].value.ubi,
+			      &imp_sth->coldata[i].valuelen,
+			      &imp_sth->coldata[i].indicator);
+	    break;
+#endif
+#endif
 	    
 	  case CS_MONEY_TYPE:
 	  case CS_MONEY4_TYPE:
@@ -3012,10 +3121,6 @@ describe(imp_sth, restype)
 	    
 	  case CS_DATETIME_TYPE:
 	  case CS_DATETIME4_TYPE:
-#if defined(CS_DATE_TYPE)
-	  case CS_DATE_TYPE:
-	  case CS_TIME_TYPE:
-#endif
 	    imp_sth->datafmt[i].maxlength = sizeof(CS_DATETIME);
 	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
 	    imp_sth->coldata[i].type      = CS_DATETIME_TYPE;
@@ -3025,7 +3130,28 @@ describe(imp_sth, restype)
 			      &imp_sth->coldata[i].valuelen,
 			      &imp_sth->coldata[i].indicator);
 	    break;
-
+#if defined(CS_DATE_TYPE)
+	  case CS_DATE_TYPE:
+	    imp_sth->datafmt[i].maxlength = sizeof(CS_DATE);
+	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
+	    imp_sth->coldata[i].type      = CS_DATE_TYPE;
+	    imp_sth->datafmt[i].datatype  = CS_DATE_TYPE;
+	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+			      &imp_sth->coldata[i].value.d,
+			      &imp_sth->coldata[i].valuelen,
+			      &imp_sth->coldata[i].indicator);
+	    break;
+	  case CS_TIME_TYPE:
+	    imp_sth->datafmt[i].maxlength = sizeof(CS_TIME);
+	    imp_sth->datafmt[i].format    = CS_FMT_UNUSED;
+	    imp_sth->coldata[i].type      = CS_TIME_TYPE;
+	    imp_sth->datafmt[i].datatype  = CS_TIME_TYPE;
+	    retcode = ct_bind(imp_sth->cmd, (i + 1), &imp_sth->datafmt[i],
+			      &imp_sth->coldata[i].value.t,
+			      &imp_sth->coldata[i].valuelen,
+			      &imp_sth->coldata[i].indicator);
+	    break;
+#endif
 
 	  case CS_CHAR_TYPE:
 	  case CS_VARCHAR_TYPE:
@@ -3092,10 +3218,9 @@ clear_sth_flags(SV *sth, imp_sth_t *imp_sth)
 }
 
 static int
-st_next_result(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+st_next_result(SV *sth, imp_sth_t *imp_sth)
 {
+    dTHX;
     D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
     CS_INT      restype;
@@ -3125,9 +3250,9 @@ st_next_result(sth, imp_sth)
 	  case CS_COMPUTE_RESULT:
 	      if(imp_sth->done_desc) {
 		  cleanUp(imp_sth);
-		  clear_cache(sth);
+		  clear_cache(sth, imp_sth);
 	      }
-	      retcode = describe(imp_sth, restype);
+	      retcode = describe(sth, imp_sth, restype);
 	      if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		  PerlIO_printf(DBIc_LOGPIO(imp_dbh), "describe() retcode = %d\n", retcode);
 
@@ -3232,35 +3357,37 @@ static int
 _convert(void *ptr, char *str, CS_LOCALE *locale, CS_DATAFMT *datafmt, 
 	 CS_INT *len)
 {
-  CS_DATAFMT srcfmt;
-  CS_INT retcode;
-  CS_INT reslen;
-
-  memset(&srcfmt, 0, sizeof(srcfmt));
-  srcfmt.datatype  = CS_CHAR_TYPE;
-  srcfmt.maxlength = strlen(str);
-  srcfmt.format    = CS_FMT_NULLTERM;
-  srcfmt.locale    = locale;
-  
-  retcode = cs_convert(context, &srcfmt, str, datafmt,
-		       ptr, &reslen);
-
-  /* FIXME - DBIS slow in threaded mode */
-  if(DBIS->debug >= 3
-     && retcode != CS_SUCCEED || reslen == CS_UNUSED)
-      PerlIO_printf(DBILOGFP, "cs_convert failed (_convert(%s, %d))", str, datafmt->datatype);
-
-  if(len) {
-    *len = reslen;
-  }
-
-  return retcode;
+    dTHX;
+    CS_DATAFMT srcfmt;
+    CS_INT retcode;
+    CS_INT reslen;
+    
+    memset(&srcfmt, 0, sizeof(srcfmt));
+    srcfmt.datatype  = CS_CHAR_TYPE;
+    srcfmt.maxlength = strlen(str);
+    srcfmt.format    = CS_FMT_NULLTERM;
+    srcfmt.locale    = locale;
+    
+    retcode = cs_convert(context, &srcfmt, str, datafmt,
+			 ptr, &reslen);
+    
+    /* FIXME - DBIS slow in threaded mode */
+    if(DBIS->debug >= 3
+       && retcode != CS_SUCCEED || reslen == CS_UNUSED)
+	PerlIO_printf(DBILOGFP, "cs_convert failed (_convert(%s, %d))", str, datafmt->datatype);
+    
+    if(len) {
+	*len = reslen;
+    }
+    
+    return retcode;
 }
 
 static CS_RETCODE
-    get_cs_msg(CS_CONTEXT *context, CS_CONNECTION *connection, char *msg, 
-	       SV *sth, imp_sth_t *imp_sth)
+get_cs_msg(CS_CONTEXT *context, CS_CONNECTION *connection, char *msg, 
+	   SV *sth, imp_sth_t *imp_sth)
 {
+    dTHX;
     CS_CLIENTMSG errmsg;
     CS_INT lastmsg = 0;
     CS_RETCODE ret;
@@ -3380,9 +3507,15 @@ static void * alloc_datatype(CS_INT datatype, int *len)
     return ptr;
 }
 
-
+#if defined(NO_BLK)
 static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 {
+    return -1;
+}
+#else
+static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
+{
+    dTHX;
     int i;
     char name[32];
     void *ptr;
@@ -3503,6 +3636,7 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
  FAIL:;
     return (ret == CS_SUCCEED ? -1 : -2);
 }
+#endif
 
 static int
 cmd_execute(SV *sth, imp_sth_t *imp_sth)
@@ -3548,11 +3682,9 @@ cmd_execute(SV *sth, imp_sth_t *imp_sth)
 }
 
 int      
-syb_st_execute(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+syb_st_execute(SV *sth, imp_sth_t *imp_sth)
 {
-    dTHR;
+    dTHX;
     D_imp_dbh_from_sth;
     int restype;
 
@@ -3572,6 +3704,27 @@ syb_st_execute(sth, imp_sth)
     }
 
     if(!imp_sth->exec_done) {
+        /* bind parameters if there are any */
+        int i;
+	SV **phs_svp;
+	char namebuf[30];
+	int namelen;
+	phs_t *phs;
+	int num_params = (int)DBIc_NUM_PARAMS(imp_sth);
+
+
+	for(i = 1; i <= num_params ; ++i) {
+	    sprintf(namebuf, ":p%d", i);
+	    namelen = strlen(namebuf);
+	    phs_svp = hv_fetch(imp_sth->all_params_hv, namebuf, namelen, 0);
+	    if (phs_svp == NULL)
+		croak("Can't bind unknown placeholder '%s'", namebuf);
+	    phs = (phs_t*)SvPVX(*phs_svp);	/* placeholder struct	*/
+	    
+	    if(!_dbd_rebind_ph(sth, imp_sth, phs, 0))
+		return -2;
+	}
+
 	if(cmd_execute(sth, imp_sth) != 0) {
 	    return -2;
 	}
@@ -3587,9 +3740,7 @@ syb_st_execute(sth, imp_sth)
 }
 
 int
-syb_st_cancel(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+syb_st_cancel(SV *sth, imp_sth_t *imp_sth)
 {
     D_imp_dbh_from_sth;
     CS_CONNECTION *connection = imp_sth->connection ? imp_sth->connection : 
@@ -3608,6 +3759,7 @@ syb_st_cancel(sth, imp_sth)
 
 static int fix_fbav(imp_sth_t *imp_sth, int num_fields, AV *av)
 {
+#if 0
     int clear_cache = 0;
     int i;
     D_imp_dbh_from_sth;
@@ -3641,31 +3793,30 @@ static int fix_fbav(imp_sth_t *imp_sth, int num_fields, AV *av)
     }
 
     return clear_cache;
+#else
+    return 1;
+#endif
 }
 
-static void clear_cache(SV *sth)
+static void clear_cache(SV *sth, imp_sth_t *imp_sth)
 {
+    dTHX;
+
+    /* Code from DBI::DBD */
     /* Clear cached statement handle attributes, if necessary */
-    SV *value;
-    char *key;
-    I32 keylen;
-    while ( (value = hv_iternextsv((HV*)SvRV(sth), &key, &keylen)) ) {
-	if (strncmp(key, "NAME_", 5) == 0 ||
-	    strncmp(key, "TYPE", 4) == 0 ||
-	    strncmp(key, "PRECISION", 9) == 0 ||
-	    strncmp(key, "SCALE", 5) == 0 ||
-	    strncmp(key, "NULLABLE", 8) == 0               ) {
-	    hv_delete((HV*)SvRV(sth), key, keylen, G_DISCARD);
-	}
-    }
+
+    hv_delete((HV*)SvRV(sth), "NAME", 4, G_DISCARD);
+    hv_delete((HV*)SvRV(sth), "NULLABLE", 8, G_DISCARD);
+    hv_delete((HV*)SvRV(sth), "NUM_OF_FIELDS", 13, G_DISCARD);
+    hv_delete((HV*)SvRV(sth), "PRECISION", 9, G_DISCARD);
+    hv_delete((HV*)SvRV(sth), "SCALE", 5, G_DISCARD);
+    hv_delete((HV*)SvRV(sth), "TYPE", 4, G_DISCARD);
 }
 
 AV *
-syb_st_fetch(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+syb_st_fetch(SV *sth, imp_sth_t *imp_sth)
 {
-    dTHR;
+    dTHX;
     D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
     int num_fields;
@@ -3683,25 +3834,18 @@ syb_st_fetch(sth, imp_sth)
 	return Nullav;
     }
 
-    av = DBIc_DBISTATE(imp_dbh)->get_fbav(imp_sth);
-    num_fields = AvFILL(av)+1;
-
-    /* fix_fbav will extend the AV* as necessary, using the imp_sth->numCols
-       value as the reference */
-    if(fix_fbav(imp_sth, num_fields, av))
-	clear_cache(sth);
-
-    /* Use the actual number of fields... XXX */
-    num_fields = DBIc_NUM_FIELDS(imp_sth);
- 
     ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
 
   TryAgain:
     retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read);
 
+    /* Use the actual number of fields... XXX */
+    num_fields = DBIc_NUM_FIELDS(imp_sth);
+    av = DBIc_DBISTATE(imp_dbh)->get_fbav(imp_sth);
+
     if(DBIc_DBISTATE(imp_dbh)->debug >= 4) {
-	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_st_fetch() -> ct_fetch() = %d (%d rows)\n",
-		      retcode, rows_read);
+	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_st_fetch() -> ct_fetch() = %d (%d rows, %d cols)\n",
+		      retcode, rows_read, num_fields);
     }
 
     switch(retcode)
@@ -3761,6 +3905,21 @@ syb_st_fetch(sth, imp_sth)
 		  case CS_INT_TYPE:
 		    sv_setiv(sv, imp_sth->coldata[i].value.i);
 		    break;
+#if defined(CS_UINT_TYPE)
+		  case CS_UINT_TYPE:
+		    sv_setnv(sv, imp_sth->coldata[i].value.ui);
+		    break;
+#endif
+#if defined(CS_BIGINT_TYPE)
+		  case CS_BIGINT_TYPE:
+		    sv_setnv(sv, imp_sth->coldata[i].value.bi);
+		    break;
+#endif
+#if defined(CS_UBIGINT_TYPE)
+		  case CS_UBIGINT_TYPE:
+		    sv_setnv(sv, imp_sth->coldata[i].value.ubi);
+		    break;
+#endif
 		  case CS_BINARY_TYPE:
 		  case CS_VARBINARY_TYPE:
 		    if (imp_dbh->useBin0x) {
@@ -3774,12 +3933,28 @@ syb_st_fetch(sth, imp_sth)
 		    sv_catpvn(sv, imp_sth->coldata[i].value.c, len);
 		    break;
 		  case CS_DATETIME_TYPE:
-		    len = date2str(&imp_sth->coldata[i].value.dt, 
+		    len = datetime2str(&imp_sth->coldata[i].value.dt, 
 				   &imp_sth->datafmt[i],
 				   buff, DATE_BUFF_LEN,
 				   imp_dbh->dateFmt, LOCALE(imp_dbh));
 		    sv_setpvn(sv, buff, len);
 		    break;
+#if defined(CS_DATE_TYPE)
+		  case CS_DATE_TYPE:
+		    len = date2str(&imp_sth->coldata[i].value.d, 
+				   &imp_sth->datafmt[i],
+				   buff, DATE_BUFF_LEN,
+				   imp_dbh->dateFmt, LOCALE(imp_dbh));
+		    sv_setpvn(sv, buff, len);
+		    break;
+		  case CS_TIME_TYPE:
+		    len = time2str(&imp_sth->coldata[i].value.t, 
+				   &imp_sth->datafmt[i],
+				   buff, DATE_BUFF_LEN,
+				   imp_dbh->dateFmt, LOCALE(imp_dbh));
+		    sv_setpvn(sv, buff, len);
+		    break;
+#endif
 		  default:
 		    croak("syb_st_fetch: unknown datatype: %d, column %d",
 			  imp_sth->datafmt[i].datatype, i + 1);
@@ -3808,17 +3983,34 @@ syb_st_fetch(sth, imp_sth)
 	  if(restype == CS_CMD_DONE || restype == CS_CMD_FAIL) {
 	      return Nullav;
 	  } else {		/* XXX What to do here??? */
-	      if(fix_fbav(imp_sth, num_fields, av))
-		  clear_cache(sth);
+	    /*	      if(fix_fbav(imp_sth, num_fields, av))
+	      clear_cache(sth, imp_sth);*/
 
-	      if(restype == CS_COMPUTE_RESULT)
+	      if(restype == CS_COMPUTE_RESULT) {
 		  goto TryAgain;
+	      }
+
 	      imp_sth->moreResults = 1;
 	  }
 	  return Nullav;
 	break;
+      case -4:        /*TDS_INVALID_PARAMETER:*/
+        /* XXX is retcode right here */
+        DBIh_SET_ERR_CHAR(sth, (imp_xxh_t*)imp_sth, Nullch, retcode, "TDS_INVALID_PARAMETER from ct_fetch", Nullch, Nullch);
+        return Nullav;
+      case -6:       /* TDS_WRONG_STATE: */
+        /* XXX is retcode right here */
+        DBIh_SET_ERR_CHAR(sth, (imp_xxh_t*)imp_sth, Nullch, retcode, "TDS_WRONG_STATE from ct_fetch", Nullch, Nullch);
+        return Nullav;
+      case CS_CANCELED:
+        /* XXX is retcode right here */
+        DBIh_SET_ERR_CHAR(sth, (imp_xxh_t*)imp_sth, Nullch, retcode, "Canceled", Nullch, Nullch);
+        return Nullav;
       default:
-	warn("ct_fetch() returned an unexpected retcode");
+	warn("ct_fetch() returned an unexpected retcode %ld", (long)retcode);
+        /* treat as a failure to avoid risk of an endless loop */
+        DBIh_SET_ERR_CHAR(sth, (imp_xxh_t*)imp_sth, Nullch, retcode, "Unexpected retcode from ct_fetch", Nullch, Nullch);
+        return Nullav;
     }
 
     if(imp_dbh->row_cb) {
@@ -3851,6 +4043,12 @@ syb_st_fetch(sth, imp_sth)
     return av;
 }
 
+#if defined(NO_BLK)
+static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
+{
+    return 1;
+}
+#else
 static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 {
     if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
@@ -3864,8 +4062,9 @@ static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
 		 imp_sth->bcpRows);
 	}
 	syb_blk_done(imp_sth, CS_BLK_CANCEL);
-    } else if (imp_sth->bcpRows == 0)
+    } else if (imp_sth->bcpRows == 0) {
 	syb_blk_done(imp_sth, CS_BLK_ALL);
+    }
 
     blkCleanUp(imp_sth, imp_dbh);
     /* Reset autocommit for this handle (see syb_blk_init()) */
@@ -3878,12 +4077,11 @@ static int sth_blk_finish(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth)
     
     return 1;
 }
+#endif
 
-int      syb_st_finish(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+int      syb_st_finish(SV *sth, imp_sth_t *imp_sth)
 {
-    dTHR;
+    dTHX;
     D_imp_dbh_from_sth;
     CS_CONNECTION *connection;
 
@@ -3899,20 +4097,20 @@ int      syb_st_finish(sth, imp_sth)
        is active, but has been invalidated by OPenSwitch. */
     /* Changed to check imp_dbh->lasterr instead */
     /*    if (imp_dbh->flushFinish && !(SvTRUE(DBIc_ERR(imp_dbh)))) { */
-/*    if (imp_dbh->flushFinish && !imp_dbh->lasterr) { */
-/* It is believed that the fixes applied to st_next_result() makes the
-   imp_dbh->lasterr check unnecessary */
+    /*    if (imp_dbh->flushFinish && !imp_dbh->lasterr) { */
+    /* It is believed that the fixes applied to st_next_result() makes the
+       imp_dbh->lasterr check unnecessary */
     if (imp_dbh->flushFinish) {
 	if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	    PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_st_finish() -> flushing\n");
-	while (DBIc_ACTIVE(imp_sth) && !imp_dbh->isDead && imp_sth->exec_done) {
+        DBIh_CLEAR_ERROR(imp_sth); /* so syb_st_fetch can tell us when something goes wrong */
+	while (DBIc_ACTIVE(imp_sth) && !imp_dbh->isDead && imp_sth->exec_done && !SvTRUE(DBIc_ERR(imp_sth))) {
 	    AV *retval;
 	    do {
 		retval = syb_st_fetch(sth, imp_sth);
 	    } while(retval && retval != Nullav);
 	}
-    }
-    else {
+    } else {
 	if (DBIc_ACTIVE(imp_sth)) {
 #if defined(ROGUE)
 	    if(DBIc_DBISTATE(imp_dbh)->debug >= 3)
@@ -3936,9 +4134,9 @@ int      syb_st_finish(sth, imp_sth)
     return 1;
 }
 
-static void dealloc_dynamic(imp_sth)
-    imp_sth_t *imp_sth;
+static void dealloc_dynamic(imp_sth_t *imp_sth)
 {
+    dTHX;
     CS_RETCODE ret;
     CS_INT restype;
 	
@@ -3988,13 +4186,11 @@ static void dealloc_dynamic(imp_sth)
 }
 
 
-void     syb_st_destroy(sth, imp_sth) 
-    SV *sth;
-    imp_sth_t *imp_sth;
+void     syb_st_destroy(SV *sth, imp_sth_t *imp_sth) 
 {
     D_imp_dbh_from_sth;
     CS_RETCODE ret;
-    dTHR;
+    dTHX;
 
     if (DBIc_DBISTATE(imp_dbh)->debug >= 3)
 	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    syb_st_destroy: called on %x...\n", imp_sth);
@@ -4063,26 +4259,16 @@ void     syb_st_destroy(sth, imp_sth)
     DBIc_IMPSET_off(imp_sth);	/* let DBI know we've done it	*/
 }
 
-int      syb_st_blob_read(sth, imp_sth, field, offset, len,
-			  destrv, destoffset)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    int field;
-    long offset;
-    long len;
-    SV *destrv;
-    long destoffset;
+int      syb_st_blob_read(SV *sth, imp_sth_t *imp_sth, int field, long offset, 
+			  long len, SV *destrv, long destoffset)
 {
   return 1;
 }
 
-int      syb_ct_get_data(sth, imp_sth, column, bufrv, buflen)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    int column;
-    SV *bufrv;
-    int buflen;
+int      syb_ct_get_data(SV *sth, imp_sth_t *imp_sth, int column, 
+			 SV *bufrv, int buflen)
 {
+    dTHX;
     CS_COMMAND *cmd = imp_sth->cmd;
     CS_VOID *buffer; 
 /*    CS_INT buflen = imp_sth->datafmt[column-1].maxlength; */
@@ -4120,22 +4306,17 @@ int      syb_ct_get_data(sth, imp_sth, column, bufrv, buflen)
     return outlen;
 }
 
-int      syb_ct_prepare_send(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+int      syb_ct_prepare_send(SV *sth, imp_sth_t *imp_sth)
 {
     return ct_command(imp_sth->cmd, CS_SEND_DATA_CMD, NULL, CS_UNUSED, CS_COLUMN_DATA) == CS_SUCCEED;
 }
 
-int      syb_ct_finish_send(sth, imp_sth)
-    SV *sth;
-    imp_sth_t *imp_sth;
+int      syb_ct_finish_send(SV *sth, imp_sth_t *imp_sth)
 {
     CS_RETCODE retcode;
     CS_INT restype;
     D_imp_dbh_from_sth;
      
-
     retcode = ct_send(imp_sth->cmd);
     if(DBIc_DBISTATE(imp_dbh)->debug >= 4)
 	PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    ct_finish_send(): ct_send() = %d\n",
@@ -4189,25 +4370,20 @@ int      syb_ct_finish_send(sth, imp_sth)
     return 1;
 }		
 
-int      syb_ct_send_data(sth, imp_sth, buffer, size)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    char *buffer;
-    int size;
+int      syb_ct_send_data(SV *sth, imp_sth_t *imp_sth, char *buffer, int size)
 {
+    dTHX;
+
     if(DBIc_DBISTATE(imp_sth)->debug >= 4)
 	PerlIO_printf(DBIc_LOGPIO(imp_sth), "    ct_send_data(): sending buffer size %d bytes\n",
 		size);
     return ct_send_data(imp_sth->cmd, buffer, size) == CS_SUCCEED;
 }
 
-int      syb_ct_data_info(sth, imp_sth, action, column, attr)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    int column;
-    int action;
-    SV *attr;
+int      syb_ct_data_info(SV *sth, imp_sth_t *imp_sth, int action, 
+			  int column, SV *attr)
 {
+    dTHX;
     D_imp_dbh_from_sth;
     CS_COMMAND *cmd = imp_sth->cmd;
     CS_RETCODE ret;
@@ -4307,11 +4483,9 @@ static T_st_params S_st_store_params[] =
 #undef s_A
 
 SV *
-syb_st_FETCH_attrib(sth, imp_sth, keysv)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    SV *keysv;
+syb_st_FETCH_attrib(SV *sth, imp_sth_t *imp_sth, SV *keysv)
 {
+    dTHX;
     STRLEN kl;
     char *key = SvPV(keysv,kl);
     int i;
@@ -4436,12 +4610,9 @@ syb_st_FETCH_attrib(sth, imp_sth, keysv)
 
 
 int
-syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    SV *keysv;
-    SV *valuesv;
+syb_st_STORE_attrib(SV *sth, imp_sth_t *imp_sth, SV *keysv, SV *valuesv)
 {
+    dTHX;
     STRLEN kl;
     char *key = SvPV(keysv,kl);
     T_st_params *par;
@@ -4450,7 +4621,6 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
 	PerlIO_printf(DBIc_LOGPIO(imp_sth), "    syb_st_STORE(): key = %s\n", key);
     }
 
- 
     for (par = S_st_store_params; par->len > 0; par++)
 	if (par->len == kl && strEQ(key, par->str))
 	    break;
@@ -4482,8 +4652,8 @@ syb_st_STORE_attrib(sth, imp_sth, keysv, valuesv)
 }
 
 static int
-date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
-	 char *buff, CS_INT len, int type, CS_LOCALE *locale)
+datetime2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt, 
+	     char *buff, CS_INT len, int type, CS_LOCALE *locale)
 {
     if(type == 0) {
 	CS_DATAFMT dstfmt;
@@ -4524,6 +4694,96 @@ date2str(CS_DATETIME *dt, CS_DATAFMT *srcfmt,
 
     return 0;
 }
+
+#if defined(CS_DATE_TYPE)
+static int
+date2str(CS_DATE *d, CS_DATAFMT *srcfmt, 
+	 char *buff, CS_INT len, int type, CS_LOCALE *locale)
+{
+    if(type == 0) {
+	CS_DATAFMT dstfmt;
+
+	memset(&dstfmt, 0, sizeof(dstfmt));
+	dstfmt.datatype  = CS_CHAR_TYPE;
+	dstfmt.maxlength = len;
+	dstfmt.format    = CS_FMT_NULLTERM;
+	dstfmt.locale    = locale;
+	cs_convert(context, srcfmt, d, &dstfmt, buff, &len);
+
+	return len - 1;
+    } else {
+	CS_DATEREC rec;
+	cs_dt_crack(context, CS_DATE_TYPE, d, &rec);
+	if(type == 2) {
+	    sprintf(buff, "%4.4d-%2.2d-%2.2dT%2.2d:%2.2d:%2.2d.%3.3dZ",
+		    rec.dateyear,
+		    rec.datemonth + 1,
+		    rec.datedmonth,
+		    rec.datehour,
+		    rec.dateminute,
+		    rec.datesecond,
+		    rec.datemsecond);
+	} else {
+	    sprintf(buff, "%4.4d-%2.2d-%2.2d %2.2d:%2.2d:%2.2d.%3.3d",
+		    rec.dateyear,
+		    rec.datemonth + 1,
+		    rec.datedmonth,
+		    rec.datehour,
+		    rec.dateminute,
+		    rec.datesecond,
+		    rec.datemsecond);
+	}
+
+	return strlen(buff);
+    }
+
+    return 0;
+}
+
+static int
+time2str(CS_TIME *t, CS_DATAFMT *srcfmt, 
+	 char *buff, CS_INT len, int type, CS_LOCALE *locale)
+{
+    if(type == 0) {
+	CS_DATAFMT dstfmt;
+
+	memset(&dstfmt, 0, sizeof(dstfmt));
+	dstfmt.datatype  = CS_CHAR_TYPE;
+	dstfmt.maxlength = len;
+	dstfmt.format    = CS_FMT_NULLTERM;
+	dstfmt.locale    = locale;
+	cs_convert(context, srcfmt, t, &dstfmt, buff, &len);
+
+	return len - 1;
+    } else {
+	CS_DATEREC rec;
+	cs_dt_crack(context, CS_TIME_TYPE, t, &rec);
+	if(type == 2) {
+	    sprintf(buff, "%4.4d-%2.2d-%2.2dT%2.2d:%2.2d:%2.2d.%3.3dZ",
+		    rec.dateyear,
+		    rec.datemonth + 1,
+		    rec.datedmonth,
+		    rec.datehour,
+		    rec.dateminute,
+		    rec.datesecond,
+		    rec.datemsecond);
+	} else {
+	    sprintf(buff, "%4.4d-%2.2d-%2.2d %2.2d:%2.2d:%2.2d.%3.3d",
+		    rec.dateyear,
+		    rec.datemonth + 1,
+		    rec.datedmonth,
+		    rec.datehour,
+		    rec.dateminute,
+		    rec.datesecond,
+		    rec.datemsecond);
+	}
+
+	return strlen(buff);
+    }
+
+    return 0;
+}
+#endif
 
 static CS_NUMERIC
 to_numeric(char *str, CS_LOCALE *locale, CS_DATAFMT *datafmt, int type)
@@ -4633,11 +4893,11 @@ to_money(char *str, CS_LOCALE *locale)
 }
 
 static CS_BINARY *
-to_binary(char *str, int *outlen)
+to_binary(char *str, STRLEN *outlen)
 {
     CS_BINARY *b, *b_ptr;
     char s[3], *strtol_end;
-    int i, b_len;
+    STRLEN i, b_len;
     long int x;
     
     /* Advance past the 0x. We could use the value of syb_use_bin_0x 
@@ -4670,15 +4930,10 @@ to_binary(char *str, int *outlen)
      return b;
 }
 
-
-
 static int 
-_dbd_rebind_ph(sth, imp_sth, phs, maxlen) 
-    SV *sth;
-    imp_sth_t *imp_sth;
-    phs_t *phs;
-    int maxlen;
+_dbd_rebind_ph(SV *sth, imp_sth_t *imp_sth, phs_t *phs, int maxlen) 
 {
+    dTHX;
     D_imp_dbh_from_sth;
     CS_RETCODE rc;
     STRLEN value_len;
@@ -4808,6 +5063,8 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
 		    value_len = CS_UNUSED;
 		} else {
 		    value = " ";
+		    value_len = CS_NULLTERM; /* PR/624 */
+
 		}
 	    }
 	    break;
@@ -4826,12 +5083,12 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
             phs->name, phs->sv_buf, (long)phs->maxlen, SvOK(phs->sv)?1:0);
     }
     if (DBIc_DBISTATE(imp_dbh)->debug >= 4) {
-        PerlIO_printf(DBIc_LOGPIO(imp_dbh), "       datafmt: type=%d, status=%d, len=%d\n",
-		phs->datafmt.datatype, phs->datafmt.status, value_len);
+        PerlIO_printf(DBIc_LOGPIO(imp_dbh), "       datafmt: type=%d, name=%s, status=%d, len=%d\n",
+		      phs->datafmt.datatype, phs->datafmt.name, phs->datafmt.status, value_len);
         PerlIO_printf(DBIc_LOGPIO(imp_dbh), "       saved type: %d\n", datatype);
     }
 
-#if 1
+#if 0
     /* If this handle is still active call finish()... */
     if(DBIc_ACTIVE(imp_sth) && imp_sth->exec_done) {
 	int finish = imp_dbh->flushFinish;
@@ -4870,23 +5127,27 @@ _dbd_rebind_ph(sth, imp_sth, phs, maxlen)
     return (rc == CS_SUCCEED);
 }
  
-int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
-		     attribs, is_inout, maxlen)
-    SV *sth;
-    imp_sth_t *imp_sth;
-    SV *ph_namesv;
-    SV *newvalue;
-    IV sql_type;
-    SV *attribs;
-    int is_inout;
-    IV maxlen;
+int      syb_bind_ph(SV *sth, imp_sth_t *imp_sth, SV *ph_namesv, SV *newvalue,
+		     IV sql_type, SV *attribs, int is_inout, IV maxlen)
 {
+    dTHX;
     SV **phs_svp;
     STRLEN name_len;
     char *name;
     char namebuf[30];
     phs_t *phs;
     STRLEN lna;
+    D_imp_dbh_from_sth;
+
+#if 1
+    /* If this handle is still active call finish()... */
+    if(DBIc_ACTIVE(imp_sth) && imp_sth->exec_done) {
+	int finish = imp_dbh->flushFinish;
+	imp_dbh->flushFinish = 1;
+	syb_st_finish(sth, imp_sth);
+	imp_dbh->flushFinish = finish;
+    }
+#endif
 
     /* This is the way Tim does it in DBD::Oracle to get around the
        tainted issue. */
@@ -4967,15 +5228,14 @@ int      syb_bind_ph(sth, imp_sth, ph_namesv, newvalue, sql_type,
     if(imp_sth->type == 2)
 	return 1;
 
-    return _dbd_rebind_ph(sth, imp_sth, phs, 0);
+    return 1; /* _dbd_rebind_ph(sth, imp_sth, phs, 0); */
 }
 
 
 static CS_RETCODE
-fetch_data(imp_dbh, cmd)
-imp_dbh_t       *imp_dbh;
-CS_COMMAND	*cmd;
+fetch_data(imp_dbh_t *imp_dbh, CS_COMMAND *cmd)
 {
+    dTHX;
     CS_RETCODE	retcode;
     CS_INT	num_cols;
     CS_INT	i;
@@ -5119,8 +5379,7 @@ CS_COMMAND	*cmd;
     return retcode;
 }
 
-static int map_sql_types(sql_type)
-    int sql_type;
+static int map_sql_types(int sql_type)
 {
     int ret;
     switch(sql_type) {
@@ -5148,8 +5407,7 @@ static int map_sql_types(sql_type)
     return ret;
 }
 
-static int map_syb_types(syb_type)
-    int syb_type;
+static int map_syb_types(int syb_type)
 {
     switch(syb_type) {
     case CS_CHAR_TYPE:		return 1;
@@ -5185,8 +5443,7 @@ static int map_syb_types(syb_type)
     }
 }
 
-static char *my_strdup(string)
-    char *string;
+static char *my_strdup(char *string)
 {
     char *buff = safemalloc(strlen(string) + 1);
     strcpy(buff, string);
@@ -5196,6 +5453,8 @@ static char *my_strdup(string)
 
 static void fetchKerbTicket(imp_dbh_t *imp_dbh)
 {
+    dTHX;
+
     if(imp_dbh->kerbGetTicket) {
 	dSP;
 	SV *retval;
@@ -5234,8 +5493,15 @@ static void fetchKerbTicket(imp_dbh_t *imp_dbh)
     }
 }
 
+#if defined(NO_BLK)
 static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
 {
+    return CS_SUCCEED;
+}
+#else
+static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
+{
+    dTHX;
     CS_RETCODE ret;
     char table[256];
     int i, num_cols;
@@ -5319,10 +5585,16 @@ static CS_RETCODE syb_blk_init(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth)
 	DBIc_set(imp_dbh, DBIcf_AutoCommit, 0);
     }
 
-
     return ret;
 }
+#endif
 
+#if defined(NO_BLK)
+static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh)
+{
+    ;
+}
+#else
 static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh)
 {
     int i;
@@ -5344,6 +5616,7 @@ static void blkCleanUp(imp_sth_t *imp_sth, imp_dbh_t *imp_dbh)
 	imp_sth->bcp_desc = NULL;
     }
 }
+#endif
 
 static int getTableName(char *statement, char *table, int maxwidth)
 {
@@ -5378,6 +5651,7 @@ SV *syb_set_cslib_cb(SV *cb)
     warn("Can't set a CS-Lib callback: DBD::Sybase was not built with -DUSE_CSLIB_CB");
     return &PL_sv_undef;
 #else
+    dTHX;
     SV *old = cslib_cb;
 
     if(cslib_cb == (SV*) NULL)
@@ -5408,13 +5682,13 @@ static int toggle_autocommit(SV *dbh, imp_dbh_t *imp_dbh, int flag)
 	}
 	if(!imp_dbh->doRealTran) {
 	    value = CS_FALSE;
-	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+	    ret = syb_set_options(imp_dbh, CS_SET, CS_OPT_CHAINXACTS, 
 			     &value, CS_UNUSED, NULL);
 	}
     } else {
 	if(!imp_dbh->doRealTran) {
 	    value = CS_TRUE;
-	    ret = ct_options(imp_dbh->connection, CS_SET, CS_OPT_CHAINXACTS, 
+	    ret = syb_set_options(imp_dbh, CS_SET, CS_OPT_CHAINXACTS, 
 			     &value, CS_UNUSED, NULL);
 	}
     }

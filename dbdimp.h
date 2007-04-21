@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.34 2005/04/09 09:02:35 mpeppler Exp $
+   $Id: dbdimp.h,v 1.38 2007/04/11 17:27:29 mpeppler Exp $
 
-   Copyright (c) 1997-2005  Michael Peppler
+   Copyright (c) 1997-2007  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -27,8 +27,17 @@ typedef struct _col_data
     union {
 	CS_CHAR	*c;
 	CS_INT i;
+#if defined(CS_UINT_TYPE)
+	CS_UINT ui;
+        CS_BIGINT bi;
+        CS_UBIGINT ubi;
+#endif
 	CS_FLOAT f;
 	CS_DATETIME dt;
+#if defined(CS_DATE_TYPE)
+        CS_DATE d;
+        CS_TIME t;
+#endif
 	CS_MONEY mn;
 	CS_NUMERIC num;
         CS_VOID *p;
@@ -87,6 +96,8 @@ struct imp_dbh_st {
     char      maxConnect[25];
     char      sslCAFile[255];
     char      blkLogin[16];
+    char      tds_keepalive[16];
+    char      serverType[32];
 
     char      serverVersion[15];
     char      serverVersionString[255];

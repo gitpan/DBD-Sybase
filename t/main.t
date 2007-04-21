@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: main.t,v 1.17 2005/10/01 13:05:13 mpeppler Exp $
+# $Id: main.t,v 1.19 2007/04/13 16:08:05 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -9,7 +9,7 @@ use _test;
 
 use strict;
 
-use Test::More tests=>33; 
+use Test::More tests=>34; 
 #use Test::More qw(no_plan);
 
 use Data::Dumper;
@@ -169,22 +169,48 @@ compute sum(cpu), sum(physical_io) by suid
 ok($sth, "Prepare compute");
 $rc = $sth->execute;
 ok($rc, "execute compute");
-my $compute_size = 2;
-my $row_size = 4;
+my %seen_result_type_width;
 while(my $row = $sth->fetch) {
     local $^W = 0;
     print "$sth->{syb_result_type}: @$row\n";
-    if($sth->{syb_result_type}==4040 && @$row != 4) {
-	$row_size = @$row;
-    }
-    if($sth->{syb_result_type}==4045 && @$row != 2) {
-	$compute_size = @$row;
-    }
+    $seen_result_type_width{ $sth->{syb_result_type} }->{ scalar @$row } = 1;
 }
-ok($row_size == 4, "compute - regular row size ($row_size should be 4)");
-ok($compute_size == 2, "compute - compute row size ($compute_size should be 2)");
+use Data::Dumper;
+is_deeply( \%seen_result_type_width, {
+    '4040' => { '4' => 1 }, # regular rows have 4 columns
+    '4045' => { '2' => 1 }  # compute row has 2
+}) or print Dumper(\%seen_result_type_width);
 
 $sth->finish;
+
+
+# Test new datatypes available with ASE 12.5.3
+#
+
+if($dbh->{syb_server_version} ge '12.5.3') {
+    my $sth = $dbh->prepare("select convert(date, getdate()), convert(time, getdate())");
+    $sth->execute;
+    while(my $r = $sth->fetch) {
+	print "@$r\n";
+    }
+}
+
+# Test new datatypes available with ASE 15
+#
+
+SKIP: {
+    skip 'requires ASE 15 ', 2 unless $dbh->{syb_server_version} ge '15';
+    $dbh->{PrintError} = 1;
+    my $sth = $dbh->prepare("select convert(unsigned smallint, power(2, 15)), convert(bigint, power(convert(bigint, 2), 32))");
+    $sth->execute;
+    while(my $r = $sth->fetch) {
+	print "@$r\n";
+	ok($r->[0] == 32768, "unsigned smallint");
+	ok($r->[1] == 4294967296, "bigint");
+    }
+}
+
+
 
 $dbh->disconnect;
 

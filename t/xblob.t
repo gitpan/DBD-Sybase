@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: xblob.t,v 1.11 2005/10/01 13:05:13 mpeppler Exp $
+# $Id: xblob.t,v 1.12 2007/03/01 17:17:44 mpeppler Exp $
 
 use lib 't';
 
@@ -101,7 +101,7 @@ $rc = $dbh->do("drop table blob_test");
 ok($rc, 'Drop table');
 
 SKIP: {
-    skip 'Requires DBI 1.34', 3 unless $DBI::VERSION >= 1.34;
+    skip 'Requires DBI 1.34', 4 unless $DBI::VERSION >= 1.34;
     my $rc = $dbh->do("create table blob_test(id int, data image null, foo varchar(30))");
     ok($rc, 'Creat table');
 

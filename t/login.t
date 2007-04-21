@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: login.t,v 1.3 2004/12/16 12:06:01 mpeppler Exp $
+# $Id: login.t,v 1.4 2007/04/12 16:09:36 mpeppler Exp $
 
 use lib 'blib/lib';
 use lib 'blib/arch';
@@ -10,7 +10,7 @@ use _test;
 
 use strict;
 
-use Test::More tests => 4;
+use Test::More tests => 6;
 
 use vars qw($Pwd $Uid $Srv $Db);
 
@@ -22,13 +22,19 @@ BEGIN { use_ok('DBI');
 #DBI->trace(3);
 my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 1});
 #DBI->trace(0);
-ok(defined($dbh), 'Connect');
+
+ok($dbh, 'Connect');
+
+ok $dbh->ping, "ping should pass after connect";
 
 $dbh->disconnect if $dbh;
 
+ok !$dbh->ping, "ping should fail after disconnect";
+
+
 $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", 'ohmygod', 'xzyzzy', {PrintError => 0});
 
-ok(!defined($dbh), 'Connect fail');
+ok(!$dbh, 'Connect fail');
 
 $dbh->disconnect if $dbh;
 

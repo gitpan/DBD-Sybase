@@ -1,6 +1,8 @@
-# $Id: _test.pm,v 1.1 2004/01/21 15:46:58 mpeppler Exp $
+# $Id: _test.pm,v 1.2 2007/03/01 17:17:44 mpeppler Exp $
 
 package _test;
+
+$|=1; #keep stdout in sync with stderr
 
 my ($Uid, $Pwd, $Srv, $Db);
 

@@ -1,13 +1,13 @@
 #!perl
 #
-# $Id: place.t,v 1.8 2005/10/01 13:05:13 mpeppler Exp $
+# $Id: place.t,v 1.9 2007/03/01 17:17:44 mpeppler Exp $
 
 use lib 't';
 use _test;
 
 use strict;
 
-use Test::More tests => 13; #qw(no_plan);
+use Test::More;
 
 BEGIN { use_ok('DBI');
         use_ok('DBD::Sybase');}
@@ -15,16 +15,12 @@ BEGIN { use_ok('DBI');
 
 my ($Uid, $Pwd, $Srv, $Db) = _test::get_info();
 
-my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 0});
+my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {PrintError => 1});
 
-ok($dbh, 'Connect');
-if(!$dbh) {
-    warn "No connection - did you set the user, password and server name correctly in PWD?\n";
-    for (4 .. 13) {
-	ok(0);
-    }
-    exit(0);
-}
+plan skip_all => "No connection - did you set the user, password and server name correctly in PWD?\n"
+    unless $dbh;
+
+plan tests => 16;
 
 SKIP: {
     skip "?-style placeholders aren't supported with this SQL Server", 10 unless $dbh->{syb_dynamic_supported};
@@ -40,10 +36,18 @@ SKIP: {
     $rc = $sth->execute("test", "Jan 3 1998", 123.4, 222.3334);
     ok($rc, 'insert 1');
 
-    $rc = $sth->execute("other test", "Jan 25 1998", 4445123.4, 2);
+    ok $sth->bind_param(1, "other test");
+    ok $sth->bind_param(2, "Jan 25 1998");
+    # the order of these two bind_param's is swapped on purpose
+    ok $sth->bind_param(4, 2);
+    ok $sth->bind_param(3, 4445123.4);
+    $rc = $sth->execute();
     ok($rc, 'insert 2');
 
-    $rc = $sth->execute("test", "Feb 30 1998", 123.4, 222.3334);
+    do {
+        local $sth->{PrintError} = 0;
+        $rc = $sth->execute("test", "Feb 30 1998", 123.4, 222.3334);
+    };
     ok(!$rc, 'insert 3 (fail)');
 
     $sth = $dbh->prepare("select * from #t where date > ? and val > ?");
@@ -51,27 +55,22 @@ SKIP: {
 
     $rc = $sth->execute('Jan 1 1998', 120);
     ok($rc, 'select');
-    my $row;
-    my $count = 0;
 
-    while($row = $sth->fetch) {
-	print "@$row\n";
-	++$count;
-    }
+    my $rows = $sth->fetchall_arrayref;
+    is(@$rows, 2, 'fetch count');
+    is_deeply [
+        [ 'test', 'Jan  3 1998 12:00AM', '123.4', '222.333' ],
+        [ 'other test', 'Jan 25 1998 12:00AM', '4445123.4', '2.000' ]
+    ], $rows;
 
-    ok($count == 2, 'fetch count');
 
-    $rc = $sth->execute('Jan 1 1998', 140);
-    ok($rc, 'select 2');
+    ok $sth->execute('Jan 1 1998', 140);
+    $rows = $sth->fetchall_arrayref;
+    is(@$rows, 1, 'fetch 2');
+    is_deeply [
+        [ 'other test', 'Jan 25 1998 12:00AM', '4445123.4', '2.000' ]
+    ], $rows;
 
-    $count = 0;
-
-    while($row = $sth->fetch) {
-	print "@$row\n";
-	++$count;
-    }
-
-    ok($count == 1, 'fetch 2');
 }
 $dbh->disconnect;
 

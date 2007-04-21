@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.41 2005/04/09 09:02:35 mpeppler Exp $
+# $Id: Makefile.PL,v 1.45 2007/04/10 15:42:21 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -20,7 +20,12 @@ $LINKTYPE = 'dynamic';
 $written_pwd_file = 'PWD';
 
 my $file;
-GetOptions('--file' => \$file);
+my $chained;
+my $threaded_libs;
+my $accept_test_defaults;
+GetOptions('--file' => \$file, '--chained:s' => \$chained,
+	   '--threaded_libs:s' => \$threaded_libs,
+	   '--accept_test_defaults' => \$accept_test_defaults);
 
 select(STDOUT); $| = 1;
 
@@ -163,36 +168,37 @@ sub configure {
 	    $lib_string =~ s/-ltcl/-lsybtcl/;
 	}
 
+	my %libname;
+
+	%libname = loadSybLibs("$SYBASE/lib");
+
+	my $libtype = '';
+
 	# Logic to replace normal libs with _r (re-entrant) libs if
 	# usethreads is defined provided by W. Phillip Moore (wpm@ms.com)
 	# I have no idea if this works on Win32 systems (probably not!)
 	if ( $Config{usethreads} ) {
 	    print "Running in threaded mode - looking for _r libraries...\n";
-	    opendir(SYBLIB,"$SYBASE/lib")
-		or die "Unable to opendir $SYBASE/lib: $!\n";
-	    
-	    my %libname = ();
-	    
-	    foreach ( readdir(SYBLIB) ) {
-		next unless /^lib(\S+)\.(so|a|sl)/;
-		next unless -f "$SYBASE/lib/$_";
-		$libname{$1} = 1;
-	    }
-	    
-	    closedir(SYBLIB);
-	    my $found = 0;
-	    foreach ( split(/\s+/,$lib_string) ) {
-		next unless /^-l(\S+)/;
-		my $oldname = $1;
-		my $newname = $1 . "_r";
-		next unless exists $libname{$newname};
-		print "Found -l$newname for -l$oldname\n";
-		++$found;
-		$lib_string =~ s/-l$oldname\b/-l$newname/;
-	    }
-	    if(!$found) {
-		print "No thread-safe Sybase libraries found\n";
-		$inc_string .= ' -DNO_THREADS ';
+
+	    if(checkForThreadedLibs()) {
+		my $found = 0;
+		foreach ( split(/\s+/,$lib_string) ) {
+		    next unless /^-l(\S+)/;
+		    my $oldname = $1;
+		    my $newname = $1 . "_r";
+		    next unless exists $libname{$newname};
+		    print "Found -l$newname for -l$oldname\n";
+		    ++$found;
+		    $lib_string =~ s/-l$oldname\b/-l$newname/;
+		}
+		if(!$found) {
+		    print "No thread-safe Sybase libraries found\n";
+		    $inc_string .= ' -DNO_THREADS ';
+		} else {
+		    $libtype .= '_r';
+		}
+	    } else {
+		print "OK - I'll use the normal libs\n\n";
 	    }
 	}
 	
@@ -204,19 +210,8 @@ sub configure {
 	    $inc_string .= ' -DSYB_LP64' unless $^O eq 'dec_osf';
 	    
 	    print "Running in 64bit mode - looking for '64' libraries...\n";
-	    opendir(SYBLIB,"$SYBASE/lib")
-		or die "Unable to opendir $SYBASE/lib: $!\n";
 	    
-	    my %libname = ();
-	    
-	    foreach ( readdir(SYBLIB) ) {
-		next unless -f "$SYBASE/lib/$_";
-		next unless /^lib(\S+)\.(so|a|sl)/;
-		$libname{$1} = 1;
-	    }
-	    
-	    closedir(SYBLIB);
-	    
+	    my $found = 0;
 	    foreach ( split(/\s+/,$lib_string) ) {
 		next unless /^-l(\S+)/;
 		my $oldname = $1;
@@ -224,7 +219,22 @@ sub configure {
 		next unless exists $libname{$newname};
 		print "Found -l$newname for -l$oldname\n";
 		$lib_string =~ s/-l$oldname\b/-l$newname/;
+		++$found;
 	    }	
+	    if($found) {
+		$libtype .= '64';
+	    }
+	}
+	
+	# Is the blk library available?
+	#my @k = keys(%libname);
+	#print "@k\n";
+	#print "libtype = $libtype\n";
+	if(my @l = grep(/(syb)?blk$libtype/, keys(%libname))) {
+	    print "BLK api available - found: @l\n";
+	} else {
+	    print "BLK api NOT available.\n";
+	    $inc_string .= ' -DNO_BLK=1'
 	}
     }
     
@@ -251,13 +261,31 @@ sub configure {
     }
 }
 
+sub loadSybLibs {
+    my $dir = shift;
+
+    my %libname = ();
+    
+    opendir(SYBLIB, $dir)
+	or die "Unable to opendir $dir: $!\n";
+    foreach ( readdir(SYBLIB) ) {
+	next unless -f "$dir/$_";
+	next unless /^lib(\S+)\.(so|a|sl)/;
+	$libname{$1} = 1;
+    }
+	    
+    closedir(SYBLIB);
+
+    return %libname;
+}
+
 sub getLibVersion {
     my $dir = shift;
 
     my $lib = "$dir/lib";
     opendir(DIR, $lib);
     # reverse to pick up libsybct before libct...
-    my @files = reverse(grep(/lib(syb)?ct\./, readdir(DIR)));
+    my @files = reverse(grep(/lib(syb)?ct(64)?\./, readdir(DIR)));
     closedir(DIR);
     my $file;
     foreach (@files) {
@@ -344,18 +372,26 @@ sub configPwd {
     }
     close(IN);
 
-    print "The DBD::Sybase module need access to a Sybase server to run the tests.\n";
-    print "To clear an entry please enter 'undef'\n";
-    print "Sybase server to use (default: $pwd{SRV}): ";
-    $pwd{SRV} = getAns(0) || $pwd{SRV};
-    print "User ID to log in to Sybase (default: $pwd{UID}): ";
-    $pwd{UID} = getAns(0) || $pwd{UID};
-    print "Password (default: $pwd{PWD}): ";
-    $pwd{PWD} = getAns(1) || $pwd{PWD};
-    print "Sybase database to use on $pwd{SRV} (default: $pwd{DB}): ";
-    $pwd{DB} = getAns(0) || $pwd{DB};
-
+    if($accept_test_defaults) {
+        $pwd{SRV} = $pwd{SRV};
+        $pwd{UID} = $pwd{UID};
+        $pwd{PWD} = $pwd{PWD};
+        $pwd{DB}  = $pwd{DB};
+    } else {
+	print "The DBD::Sybase module need access to a Sybase server to run the tests.\n";
+	print "To clear an entry please enter 'undef'\n";
+	print "Sybase server to use (default: $pwd{SRV}): ";
+	$pwd{SRV} = getAns(0) || $pwd{SRV};
+	print "User ID to log in to Sybase (default: $pwd{UID}): ";
+	$pwd{UID} = getAns(0) || $pwd{UID};
+	print "Password (default: $pwd{PWD}): ";
+	$pwd{PWD} = getAns(1) || $pwd{PWD};
+	print "Sybase database to use on $pwd{SRV} (default: $pwd{DB}): ";
+	$pwd{DB} = getAns(0) || $pwd{DB};
+    }
+	
     warn "\n* Writing login information, including password, to file $written_pwd_file.\n\n";
+
     # Create the file non-readable by anyone else.
     my $old_umask;
     unless($^O =~ /MSWin32/) {
@@ -391,11 +427,49 @@ Sybase implements AutoCommit handling for both its ODBC and JDBC drivers.
 
 EOF
   print "Use 'CHAINED' mode by default (Y/N) [Y]: ";
-  my $ans = getAns(0);
+  my $ans;
+  if(defined($chained)) {
+      $ans = $chained;
+  } else {
+      $ans = getAns(0);
+  }
   if($ans and $ans !~ /^y/i) {
     $inc_string .= " -DNO_CHAINED_TRAN=1";
   }
   print "\n";
+}
+
+sub checkForThreadedLibs {
+    my $ret = 1;
+    if($] >= 5.008) {
+	$ret = 0;
+
+	print <<EOF;
+
+***NOTE***
+There is an incompatibility between perl (5.8.x) built in threaded mode and 
+Sybase's threaded libraries, which means that signals delivered to the perl 
+process result in a segment violation.
+
+I suggest building DBD::Sybase with the normal libraries in this case to get
+reasonable behavior for signal handling.
+
+EOF
+  print "Use the threaded (lib..._r) libraries [N]: ";
+	my $ans;
+	
+	if(defined($threaded_libs)) {
+	    $ans = $threaded_libs;
+	} else {
+	    $ans = getAns(0);
+	}
+	if($ans and $ans =~ /^y/i) {
+	    $ret = 1;
+	}
+	print "\n";
+    }
+
+    return $ret;
 }
 
 
@@ -413,6 +487,7 @@ sub getAns {
 	eval {
 	    Term::ReadKey::ReadMode('normal');
 	};
+        print "\n"; # because newline from user wasn't echo'd
     }
     $ans =~ s/^\s+//;
     $ans =~ s/\s+$//;
