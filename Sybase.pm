@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.105 2007/04/21 15:43:55 mpeppler Exp $
+# $Id: Sybase.pm,v 1.106 2008/08/31 08:46:22 mpeppler Exp $
 
-# Copyright (c) 1996-2007   Michael Peppler
+# Copyright (c) 1996-2008   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -25,14 +25,16 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.08';
-    my $Revision = substr(q$Revision: 1.105 $, 10);
+    $VERSION = '1.09';
+    my $Revision = substr(q$Revision: 1.106 $, 10);
 
     require_version DBI 1.30;
 
-    # Make sure that dl_open() calls use the RTLD_GLOBAL flag if
-    # it is available. This appears not to work under AIX 5.x
-    sub dl_load_flags { if($^O eq 'aix') { 0x00 } else { 0x01 }}
+    # dl_open() calls need to use the RTLD_GLOBAL flag if
+    # you are going to use the Kerberos libraries. 
+    # There are systems / OSes where this does not work (AIX 5.x, for example)
+    # set to 1 to get RTLD_GLOBAL turned on.
+    sub dl_load_flags { 0x00 }
 
     bootstrap DBD::Sybase $VERSION;
 
@@ -1214,6 +1216,19 @@ description of the available formats.
 This read-only attribute is set to TRUE if the BLK API is available in
 this version of DBD::Sybase. 
 
+=item syb_disconnect_in_child (bool)
+
+Sybase client library allows using opened connections across a fork (i.e. the opened connection 
+can be used in the child process). DBI by default will set flags such that this connection will 
+be closed when the child process terminates. This is in most cases not what you want. DBI provides
+the InactiveDestroy attribute to control this, but you have to set this attribute manually as it
+defaults to False (i.e. when DESTROY is called for the handle the connection is closed).
+The syb_disconnect_in_child attribute attempts to correct this - the default is for this 
+attribute to be False - thereby inhibitting the closing of the connection(s) when 
+the current process ID doesn't match the process ID that created the connection.
+
+Default: off
+
 =back
 
 =head2 Statement Handle Attributes
@@ -1549,7 +1564,7 @@ later and use the direct method calls:
   # now transfer the data (in a single chunk, this time)
   $sth->syb_ct_send_data($image, length($image));
   # commit the operation
-  $sth->ct_finish_send();
+  $sth->syb_ct_finish_send();
 
 The ct_send_data() call can also transfer the data in chunks, however you 
 must know the total size of the image before you start the insert. For example:

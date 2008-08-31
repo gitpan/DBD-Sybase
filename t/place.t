@@ -1,13 +1,13 @@
 #!perl
 #
-# $Id: place.t,v 1.9 2007/03/01 17:17:44 mpeppler Exp $
+# $Id: place.t,v 1.10 2008/08/31 08:46:22 mpeppler Exp $
 
 use lib 't';
 use _test;
 
 use strict;
 
-use Test::More;
+use Test::More tests => 18;
 
 BEGIN { use_ok('DBI');
         use_ok('DBD::Sybase');}
@@ -20,7 +20,7 @@ my $dbh = DBI->connect("dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd, {Print
 plan skip_all => "No connection - did you set the user, password and server name correctly in PWD?\n"
     unless $dbh;
 
-plan tests => 16;
+#plan tests => 16;
 
 SKIP: {
     skip "?-style placeholders aren't supported with this SQL Server", 10 unless $dbh->{syb_dynamic_supported};

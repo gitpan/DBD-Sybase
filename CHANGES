@@ -1,4 +1,20 @@
-$Id: CHANGES,v 1.80 2007/04/19 18:31:18 mpeppler Exp $
+$Id: CHANGES,v 1.81 2008/08/31 12:08:17 mpeppler Exp $
+
+Release 1.09
+
+    Behavior change: A new connection level attribute (syb_disconnect_in_child)
+    has been added to allow automatical handling of InactiveDestroy across
+    forks. By default in 1.09 a connection will NOT get closed if the process
+    ID of the process that is exiting is not the same as the PID of the
+    process that created the connection.
+    Detect ASE error 5702 (The server is terminating this process) as a fatal
+    error for the connection.
+    
+    Bug Fixes
+    
+    645 - Spurious COMMIT calls sent to the dataserver during the login/connect calls.
+    628 - Increase size of Kerberos Principal string buffer
+    627 - Spurious sigset_t declaration.
 
 Release 1.08
 

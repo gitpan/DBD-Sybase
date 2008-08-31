@@ -1,7 +1,7 @@
 /*
-   $Id: dbdimp.h,v 1.38 2007/04/11 17:27:29 mpeppler Exp $
+   $Id: dbdimp.h,v 1.41 2008/08/31 12:08:17 mpeppler Exp $
 
-   Copyright (c) 1997-2007  Michael Peppler
+   Copyright (c) 1997-2008  Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.
@@ -90,7 +90,7 @@ struct imp_dbh_st {
     char      curr_db[36];
     char      tdsLevel[30];
     char      encryptPassword[10];
-    char      kerberosPrincipal[32];
+    char      kerberosPrincipal[256];
     char      host[64];		/* for use with CS_SERVERADDR */
     char      port[20];		/* for use with CS_SERVERADDR */
     char      maxConnect[25];
@@ -117,6 +117,10 @@ struct imp_dbh_st {
     int       deadlockSleep;
     int       deadlockVerbose;
     int       nsqlNoStatus;
+    
+    int		  disconnectInChild; /* if set, then OK to disconnect in child process
+    (even if pid different from pid that created the connection), subject to the
+    setting of InactiveDestroy */
 
     int       noChildCon;	/* Don't create child connections for
 				   simultaneous statement handles */
@@ -127,6 +131,8 @@ struct imp_dbh_st {
     int       inUse;		/* Set when the primary statement handle
 				   (the one that uses the connection referred
 				   to here) is in use. */
+    int		  pid;			/* Set when the connection is opened, used checked in the DESTROY() call */
+    int       init_done;
 
     char      *sql;
 
