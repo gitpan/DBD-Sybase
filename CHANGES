@@ -1,4 +1,17 @@
-$Id: CHANGES,v 1.81 2008/08/31 12:08:17 mpeppler Exp $
+$Id: CHANGES,v 1.83 2010/04/10 12:03:58 mpeppler Exp $
+
+Release 1.10
+
+    Handle 15.x datatypes correctly.
+    Add LONGMS date format symbol to handle microseconds for bigdatetime.
+    Add support for CS_LONGCHAR_TYPE (Mark Aufflick)
+    Document syb_isdead().
+    Handle 64bit builds with FreeTDS (Ian Grant/Hans Kristian Rosbach)
+    Add foreign_key_info & statistics_info (Jim Radford)
+    Change behavior of large fixed precision numeric types (money, bigint)
+    to be converted to a string internally and returned as such to the caller
+    (behavior similar to numeric/decimal). This can be reverted to the old behavior 
+    by defining SYB_NATIVE_NUM.
 
 Release 1.09
 

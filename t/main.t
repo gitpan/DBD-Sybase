@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: main.t,v 1.19 2007/04/13 16:08:05 mpeppler Exp $
+# $Id: main.t,v 1.21 2010/04/07 20:53:38 mpeppler Exp $
 
 # Base DBD Driver Test
 
@@ -9,7 +9,7 @@ use _test;
 
 use strict;
 
-use Test::More tests=>34; 
+use Test::More tests=>36; 
 #use Test::More qw(no_plan);
 
 use Data::Dumper;
@@ -210,6 +210,18 @@ SKIP: {
     }
 }
 
+SKIP: {
+    skip 'requires ASE 15.5 ', 2 unless $dbh->{syb_server_version} ge '15.5';
+    $dbh->{PrintError} = 1;
+    $dbh->syb_date_fmt('LONGMS');
+    my $sth = $dbh->prepare("select current_bigdatetime(), current_bigtime()");
+    $sth->execute;
+    while(my $r = $sth->fetch) {
+    print "@$r\n";
+    ok(1 == 1, "bigdatetime");
+    ok(1 == 1, "bigtime");
+    }
+}
 
 
 $dbh->disconnect;

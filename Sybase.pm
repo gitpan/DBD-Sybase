@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.106 2008/08/31 08:46:22 mpeppler Exp $
+# $Id: Sybase.pm,v 1.110 2010/04/12 17:33:20 mpeppler Exp $
 
 # Copyright (c) 1996-2008   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
     $hostname = Sys::Hostname::hostname();
     $init_done = 0;
-    $VERSION = '1.09';
-    my $Revision = substr(q$Revision: 1.106 $, 10);
+    $VERSION = '1.10';
+    my $Revision = substr(q$Revision: 1.110 $, 10);
 
     require_version DBI 1.30;
 
@@ -54,13 +54,14 @@
 	if($DBI::VERSION >= 1.37 && !$DBD::Sybase::init_done) {
 	    DBD::Sybase::db->install_method('syb_nsql');
 	    DBD::Sybase::db->install_method('syb_date_fmt');
+	    DBD::Sybase::db->install_method('syb_isdead');
 	    DBD::Sybase::st->install_method('syb_ct_get_data');
 	    DBD::Sybase::st->install_method('syb_ct_data_info');
 	    DBD::Sybase::st->install_method('syb_ct_send_data');
 	    DBD::Sybase::st->install_method('syb_ct_prepare_send');
 	    DBD::Sybase::st->install_method('syb_ct_finish_send');
 	    DBD::Sybase::st->install_method('syb_output_params');
-	    DBD::Sybase::st->install_method('syb_describe');
+	    DBD::Sybase::st->install_method('syb_describe');	    
 	    ++$DBD::Sybase::init_done;
 	}
 
@@ -287,6 +288,36 @@
 	$sth->execute;
 	$sth;
     }
+    
+     sub foreign_key_info {
+       my $dbh = shift;
+      my $pk_catalog = $dbh->quote(shift);     # == database in Sybase terms
+       my $pk_schema = $dbh->quote(shift);      # == owner in Sybase terms
+       my $pk_table = $dbh->quote(shift);
+       my $fk_catalog = $dbh->quote(shift);     # == database in Sybase terms
+       my $fk_schema = $dbh->quote(shift);      # == owner in Sybase terms
+       my $fk_table = $dbh->quote(shift);
+
+       my $sth = $dbh->prepare("sp_fkeys $pk_table, $pk_catalog, $pk_schema, $fk_table, $fk_catalog, $fk_schema");
+
+       $sth->execute;
+       $sth;
+    }
+
+    sub statistics_info {
+       my $dbh = shift;
+       my $catalog = $dbh->quote(shift);     # == database in Sybase terms
+       my $schema = $dbh->quote(shift);      # == owner in Sybase terms
+       my $table = $dbh->quote(shift);
+       my $is_unique = shift;
+       my $quick = shift;
+
+       my $sth = $dbh->prepare("sp_indexes \@\@servername, $table, $catalog, $schema, NULL, $is_unique");
+
+       $sth->execute;
+       $sth;
+    }
+    
 
     sub ping_pl { # old code - now implemented by syb_ping() in dbdimp.c
 	my $dbh = shift;
@@ -1315,6 +1346,12 @@ subset of available formats has been implemented:
 
 Nov 15 1998 11:30:11:496AM
 
+=item LONGMS
+
+New with ASE 15.5 - for bigtime/bigdatetime datatypes, includes microseconds:
+
+Apr  7 2010 10:40:33.532315PM
+
 =item SHORT
 
 Nov 15 1998 11:30AM
@@ -1885,6 +1922,17 @@ See the I<set> command in the Sybase Adaptive Server Enterprise Reference
 Manual for more information on the set command and on the arithabort option.
 
 =head1 Other Private Methods
+
+=head2 DBD::Sybase private Database Handle Methods
+
+=over 4
+
+=item $bool = $dbh->syb_isdead
+
+Tests the connection to see if the connection has been marked DEAD by OpenClient.
+The connection can get marked DEAD if an error occurs on the connection, or the connection fails.
+
+=back
 
 =head2 DBD::Sybase private Statement Handle Methods
 

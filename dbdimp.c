@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.101 2008/08/31 12:08:17 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.105 2010/04/10 12:05:36 mpeppler Exp $
 
  Copyright (c) 1997-2008  Michael Peppler
 
@@ -59,6 +59,44 @@
 
 #if !defined(PROC_STATUS)
 #define PROC_STATUS 0
+#endif
+
+/*
+ * In DBD::Sybase 1.09 and before, certain large numeric types (money, bigint)
+ * were being kept in native format, and then returned to the caller as a perl NV
+ * data item. An NV is really a float, so there was loss of precision, especially for bigint
+ * data which is a 64bit int.
+ * In 1.10 these datatypes behave the same way as numeric/decimal - converted to a char string
+ * and returned that way to the caller, who can then use Math::BigInt, etc.
+ * If you want to revert to the previous behavior, you need to define SYB_NATIVE_NUM.
+ *
+ * #define SYB_NATIVE_NUM
+ */
+
+/* FreeTDS doesn't always define these symbols */
+#if defined(CS_VERSION_110)
+#if !defined BLK_VERSION_110
+#define BLK_VERSION_110	BLK_VERSION_100
+#endif
+#endif
+#if defined(CS_VERSION_120)
+#if !defined BLK_VERSION_120
+#define BLK_VERSION_120	BLK_VERSION_110
+#endif
+#endif
+#if defined(CS_VERSION_125)
+#if !defined BLK_VERSION_125
+#define BLK_VERSION_125	BLK_VERSION_120
+#endif
+#endif
+#if defined(CS_VERSION_150)
+#if !defined BLK_VERSION_150
+#define BLK_VERSION_150	BLK_VERSION_125
+#endif
+#endif
+
+#if !defined(CS_LONGCHAR_TYPE)
+#define CS_LONGCHAR_TYPE CS_CHAR_TYPE
 #endif
 
 DBISTATE_DECLARE;
@@ -541,7 +579,7 @@ servermsg_cb(CS_CONTEXT *context, CS_CONNECTION *connection,
 		else
 			retcode = CS_SUCCEED;
 
-		sv_catpv(DBIc_ERRSTR(imp_dbh), "\n");
+		sv_catpv(DBIc_ERRSTR(imp_dbh), " ");
 
 		return retcode;
 	} else {
@@ -598,6 +636,7 @@ static CS_INT get_cwidth(CS_DATAFMT *column) {
 
 	switch ((int) column->datatype) {
 	case CS_CHAR_TYPE:
+	case CS_LONGCHAR_TYPE:
 	case CS_VARCHAR_TYPE:
 	case CS_TEXT_TYPE:
 	case CS_IMAGE_TYPE:
@@ -616,12 +655,24 @@ static CS_INT get_cwidth(CS_DATAFMT *column) {
 		break;
 
 	case CS_SMALLINT_TYPE:
+#if defined(CS_USMALLINT_TYPE)
+	case CS_USMALLINT_TYPE:
+#endif
 		len = 6;
 		break;
 
 	case CS_INT_TYPE:
+#if defined(CS_UINT_TYPE)
+	case CS_UINT_TYPE:
+#endif
 		len = 11;
 		break;
+
+#if defined(CS_BIGINT_TYPE)
+	case CS_BIGINT_TYPE:
+	case CS_UBIGINT_TYPE:
+		len = 22;
+#endif
 
 	case CS_REAL_TYPE:
 	case CS_FLOAT_TYPE:
@@ -639,12 +690,11 @@ static CS_INT get_cwidth(CS_DATAFMT *column) {
 	case CS_DATE_TYPE:
 	case CS_TIME_TYPE:
 #endif
-		len = 30;
-		break;
-
-	case CS_NUMERIC_TYPE:
-	case CS_DECIMAL_TYPE:
-		len = (CS_MAX_PREC + 2);
+#if defined(CS_BIGDATETIME_TYPE)
+	case CS_BIGDATETIME_TYPE:
+	case CS_BIGTIME_TYPE:
+#endif
+		len = 40;
 		break;
 
 #ifdef CS_UNIQUE_TYPE
@@ -668,6 +718,7 @@ static CS_INT display_dlen(CS_DATAFMT *column) {
 
 	switch ((int) column->datatype) {
 	case CS_CHAR_TYPE:
+	case CS_LONGCHAR_TYPE:
 	case CS_VARCHAR_TYPE:
 	case CS_TEXT_TYPE:
 	case CS_IMAGE_TYPE:
@@ -739,6 +790,13 @@ void syb_init(dbistate_t *dbistate) {
 	sigprocmask(SIG_BLOCK, &set, NULL);
 #endif
 
+#if defined(CS_CURRENT_VERSION)
+	if(retcode != CS_SUCCEED) {
+		cs_ver = CS_CURRENT_VERSION;
+		retcode = cs_ctx_alloc(cs_ver, &context);
+	}
+#endif
+
 #if defined(CS_VERSION_150)
 	if(retcode != CS_SUCCEED) {
 		cs_ver = CS_VERSION_150;
@@ -772,6 +830,10 @@ void syb_init(dbistate_t *dbistate) {
 	if (retcode != CS_SUCCEED)
 		croak("DBD::Sybase initialize: cs_ctx_alloc(%d) failed", cs_ver);
 
+#if defined(CS_CURRENT_VERSION)
+	if(cs_ver = CS_CURRENT_VERSION)
+		BLK_VERSION=CS_CURRENT_VERSION;
+#endif
 #if defined(CS_VERSION_150)
 	if(cs_ver == CS_VERSION_150)
 		BLK_VERSION = BLK_VERSION_150;
@@ -1707,6 +1769,12 @@ int syb_db_date_fmt(SV *dbh, imp_dbh_t *imp_dbh, char *fmt) {
 		type = CS_DATES_YMD3_YYYY;
 	} else if (!strcmp(fmt, "HMS")) {
 		type = CS_DATES_HMS;
+	} else if (!strcmp(fmt, "LONGMS")) {
+#if defined(CS_DATES_LONGUSA_YYYY)
+		type = CS_DATES_LONGUSA_YYYY;
+#else
+		type = CS_DATES_LONG;
+#endif
 	} else {
 		warn("Invalid format %s in _date_fmt", fmt);
 		return 0;
@@ -2853,6 +2921,7 @@ static void cleanUp(imp_sth_t *imp_sth) {
 	int numCols = DBIc_NUM_FIELDS(imp_sth);
 	for (i = 0; i < numCols; ++i) {
 		if (imp_sth->coldata[i].type == CS_CHAR_TYPE
+				|| imp_sth->coldata[i].type == CS_LONGCHAR_TYPE
 				|| imp_sth->coldata[i].type == CS_TEXT_TYPE
 				|| imp_sth->coldata[i].type == CS_IMAGE_TYPE) {
 			Safefree(imp_sth->coldata[i].value.c);
@@ -2983,7 +3052,7 @@ static CS_RETCODE describe(SV *sth, imp_sth_t *imp_sth, int restype) {
 					&imp_sth->coldata[i].indicator);
 			break;
 
-#if 1 && defined(CS_UINT_TYPE)
+#if defined(SYB_NATIVE_NUM) && defined(CS_UINT_TYPE)
 		case CS_USMALLINT_TYPE:
 		case CS_UINT_TYPE:
 			imp_sth->datafmt[i].maxlength = sizeof(CS_INT);
@@ -2996,7 +3065,7 @@ static CS_RETCODE describe(SV *sth, imp_sth_t *imp_sth, int restype) {
 					&imp_sth->coldata[i].indicator);
 			break;
 #endif
-#if 1
+#if defined(SYB_NATIVE_NUM)
 #if defined(CS_BIGINT_TYPE)
 		case CS_BIGINT_TYPE:
 			imp_sth->datafmt[i].maxlength = sizeof(CS_BIGINT);
@@ -3023,8 +3092,10 @@ static CS_RETCODE describe(SV *sth, imp_sth_t *imp_sth, int restype) {
 #endif
 #endif
 
+#if defined(SYB_NATIVE_NUM)
 		case CS_MONEY_TYPE:
 		case CS_MONEY4_TYPE:
+#endif
 		case CS_REAL_TYPE:
 		case CS_FLOAT_TYPE:
 			imp_sth->datafmt[i].maxlength = sizeof(CS_FLOAT);
@@ -3091,6 +3162,7 @@ static CS_RETCODE describe(SV *sth, imp_sth_t *imp_sth, int restype) {
 #endif
 
 		case CS_CHAR_TYPE:
+		case CS_LONGCHAR_TYPE:
 		case CS_VARCHAR_TYPE:
 		case CS_BINARY_TYPE:
 		case CS_VARBINARY_TYPE:
@@ -3817,9 +3889,11 @@ AV * syb_st_fetch(SV *sth, imp_sth_t *imp_sth) {
 				case CS_IMAGE_TYPE:
 				case CS_TEXT_TYPE:
 				case CS_CHAR_TYPE:
+				case CS_LONGCHAR_TYPE:
 					len = imp_sth->coldata[i].valuelen;
 					sv_setpvn(sv, imp_sth->coldata[i].value.c, len);
-					if (imp_sth->coldata[i].realType == CS_CHAR_TYPE
+					if ((imp_sth->coldata[i].realType == CS_CHAR_TYPE ||
+							imp_sth->coldata[i].realType == CS_LONGCHAR_TYPE)
 							&& ChopBlanks) {
 						char *p = SvEND(sv);
 						int len = SvCUR(sv);

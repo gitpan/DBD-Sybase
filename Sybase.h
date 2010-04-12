@@ -1,4 +1,4 @@
-/* $Id: Sybase.h,v 1.14 2007/04/11 17:27:29 mpeppler Exp $
+/* $Id: Sybase.h,v 1.17 2010/04/08 20:10:03 mpeppler Exp $
 
    Copyright (c) 1997 - 2007 Michael Peppler
 
@@ -49,6 +49,9 @@
 
 #include "dbdimp.h"
 
+#if defined(CS_CURRENT_VERSION)
+#define CTLIB_VERSION	CS_CURRENT_VERSION
+#else
 #if defined(CS_VERSION_125)
 #define CTLIB_VERSION   CS_VERSION_125
 #else 
@@ -59,6 +62,7 @@
 #define CTLIB_VERSION   CS_VERSION_110
 #else
 #define CTLIB_VERSION	CS_VERSION_100
+#endif
 #endif
 #endif
 #endif

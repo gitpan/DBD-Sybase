@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.45 2007/04/10 15:42:21 mpeppler Exp $
+# $Id: Makefile.PL,v 1.46 2010/04/07 20:55:18 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -14,10 +14,11 @@ use Config;
 use Getopt::Long;
 
 use vars qw($SYBASE $inc_string $lib_string $LINKTYPE $written_pwd_file
-	    $newlibnames);
+	    $newlibnames $libdir);
 
 $LINKTYPE = 'dynamic';
 $written_pwd_file = 'PWD';
+$libdir = 'lib';
 
 my $file;
 my $chained;
@@ -34,9 +35,9 @@ configure();
 configPwd();
 
 my $lddlflags = $Config{lddlflags};
-$lddlflags = "-L$SYBASE/lib $lddlflags" unless $^O eq 'VMS';
+$lddlflags = "-L$SYBASE/$libdir $lddlflags" unless $^O eq 'VMS';
 my $ldflags = $Config{ldflags};
-$ldflags = "-L$SYBASE/lib $ldflags" unless $^O eq 'VMS';
+$ldflags = "-L$SYBASE/$libdir $ldflags" unless $^O eq 'VMS';
 
 
 WriteMakefile('NAME'         => 'DBD::Sybase',
@@ -114,11 +115,18 @@ sub configure {
 	$SYBASE .= "/$ENV{SYBASE_OCS}";
     }
 
-    if(! -d "$SYBASE/lib") {
-	die "Can't find the lib directory under $SYBASE!";
+    my $libfound = 0;
+    my $libsub = '';
+    foreach $libdir ('lib', 'lib64') {
+    	if (-d "$SYBASE/$libdir") {
+    		if (checkLib($SYBASE)) {
+    			$libfound = 1;
+    			$libsub = $libdir;
+    		}
+    	}
     }
 	
-    die "Can't find any Sybase libraries in $SYBASE/lib" unless checkLib($SYBASE);
+    die "Can't find any Sybase libraries in $SYBASE/lib or $SYBASE/lib64" unless $libfound;
 
     my $inc_found = 0;
     if(-d "$SYBASE/include" && -f "$SYBASE/include/cspublic.h") {
@@ -133,7 +141,7 @@ sub configure {
     }
     die "Can't find the Client Library include files under $SYBASE" unless($inc_found);
 
-    my $version = getLibVersion($SYBASE);
+    my $version = getLibVersion("$SYBASE/$libsub");
 #    if(!$version || $version lt '12') {
       #print "FreeTDS or older Client Library. Enabling CS-Lib Callbacks\n";
       #$inc_string .= " -DUSE_CSLIB_CB=1";
@@ -144,33 +152,33 @@ sub configure {
 #    print "OS = $^O\n";
 
     if($^O eq 'MSWin32') {
-	$lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
+	   $lib_string = "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
     } elsif($^O eq 'VMS') {
-	$lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb -llibblk.olb $attr{EXTRA_LIBS}";
+	   $lib_string = "-L$SYBASE/lib -llibct.olb -llibcs.olb -llibtcl.olb -llibcomn.olb -llibintl.olb -llibblk.olb $attr{EXTRA_LIBS}";
     } elsif($^O =~ /cygwin/) {
         $lib_string = "-L$SYBASE/lib -lct -lcs -lblk";
         $inc_string .= " -D_MSC_VER=800";
     } else {
 	# Supplied by Erick Calder. I'm not sure why libsybsrv is needed...
-	$attr{EXTRA_LIBS} .= " -lsybsrv" if $^O eq 'darwin';
+    	$attr{EXTRA_LIBS} .= " -lsybsrv" if $^O eq 'darwin';
 
-	my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS}, $version);
-	if($file) {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl -lblk $attr{EXTRA_LIBS} -ldl -lm";
-	} else {
-	    $lib_string = "-L$SYBASE/lib -lct -lcs -ltcl -lcomn -lintl -lblk $extra -ldl -lm";
-	}
-	if($newlibnames) {
-	    foreach (qw(ct cs tcl comn intl blk)) {
-		$lib_string =~ s/-l$_/-lsyb$_/;
-	    }
-	} elsif($^O =~ /linux|freebsd/i) {
-	    $lib_string =~ s/-ltcl/-lsybtcl/;
+        my $extra = getExtraLibs($SYBASE, $attr{EXTRA_LIBS}, $version);
+	    if($file) {
+	        $lib_string = "-L$SYBASE/$libdir -lct -lcs -ltcl -lcomn -lintl -lblk $attr{EXTRA_LIBS} -ldl -lm";
+	    } else {
+	        $lib_string = "-L$SYBASE/$libdir -lct -lcs -ltcl -lcomn -lintl -lblk $extra -ldl -lm";
+        }
+	    if($newlibnames) {
+	        foreach (qw(ct cs tcl comn intl blk)) {
+    		  $lib_string =~ s/-l$_/-lsyb$_/;
+	        }
+	   } elsif($^O =~ /linux|freebsd/i) {
+	        $lib_string =~ s/-ltcl/-lsybtcl/;
 	}
 
 	my %libname;
 
-	%libname = loadSybLibs("$SYBASE/lib");
+	%libname = loadSybLibs("$SYBASE/$libdir");
 
 	my $libtype = '';
 
@@ -280,9 +288,8 @@ sub loadSybLibs {
 }
 
 sub getLibVersion {
-    my $dir = shift;
+    my $lib = shift;
 
-    my $lib = "$dir/lib";
     opendir(DIR, $lib);
     # reverse to pick up libsybct before libct...
     my @files = reverse(grep(/lib(syb)?ct(64)?\./, readdir(DIR)));
@@ -317,8 +324,8 @@ sub getExtraLibs {
     my $cfg = shift;
     my $version = shift;
 
-    opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
-    my %files = map { $_ =~ s/lib([^\.]+)\..*/$1/; $_ => 1 } grep(/lib/ && -f "$dir/lib/$_", readdir(DIR));
+    opendir(DIR, "$dir/$libdir") || die "Can't access $dir/$libdir: $!";
+    my %files = map { $_ =~ s/lib([^\.]+)\..*/$1/; $_ => 1 } grep(/lib/ && -f "$dir/$libdir/$_", readdir(DIR));
     closedir(DIR);
 
     my %x = map {$_ => 1} split(' ', $cfg);
@@ -331,7 +338,7 @@ sub getExtraLibs {
     }
 
     foreach my $f (qw(insck tli sdna dnet_stub tds skrb gss)) {
-	$x{"-l$f"} = 1 if exists $files{$f}  && -f "$dir/lib/lib$f.$dlext";
+	$x{"-l$f"} = 1 if exists $files{$f}  && -f "$dir/$libdir/lib$f.$dlext";
     }
     if($version gt '11') {
 	delete($x{-linsck});
@@ -348,7 +355,7 @@ sub getExtraLibs {
 sub checkLib {
     my $dir = shift;
 
-    opendir(DIR, "$dir/lib") || die "Can't access $dir/lib: $!";
+    opendir(DIR, "$dir/$libdir") || die "Can't access $dir/$libdir: $!";
     my @files = grep(/libct|libsybct/i, readdir(DIR));
     closedir(DIR);
     if(grep(/libsybct/, @files)) {
