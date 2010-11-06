@@ -23,6 +23,7 @@ t/place.t
 t/exec.t
 t/nsql.t
 t/thread.t
+t/utf8.t
 t/xblob.t
 t/xblk.t
 t/screen.jpg

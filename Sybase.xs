@@ -1,6 +1,6 @@
 /* -*-C-*- */
 
-/* $Id: Sybase.xs,v 1.17 2007/04/10 15:42:21 mpeppler Exp $
+/* $Id: Sybase.xs,v 1.18 2010/11/06 13:49:27 mpeppler Exp $
    Copyright (c) 1997-2007 Michael Peppler
 
    Uses from Driver.xst
@@ -73,7 +73,7 @@ _date_fmt(dbh, fmt)
     syb_date_fmt     = 1
     CODE:
     D_imp_dbh(dbh);
-    ST(0) = syb_db_date_fmt(dbh, imp_dbh, fmt) ? &sv_yes : &sv_no;
+    ST(0) = syb_db_date_fmt(dbh, imp_dbh, fmt) ? &PL_sv_yes : &PL_sv_no;
 
 void
 ping(dbh)
@@ -92,7 +92,7 @@ cancel(sth)
     syb_cancel     = 1
     CODE:
     D_imp_sth(sth);
-    ST(0) = syb_st_cancel(sth, imp_sth) ? &sv_yes : &sv_no;
+    ST(0) = syb_st_cancel(sth, imp_sth) ? &PL_sv_yes : &PL_sv_no;
 
 void
 ct_get_data(sth, column, bufrv, buflen=0)
@@ -126,7 +126,7 @@ ct_data_info(sth, action, column, attr=&PL_sv_undef)
     } else if (strEQ(action, "CS_GET")) {
 	sybaction = CS_GET;
     }
-    ST(0) = syb_ct_data_info(sth, imp_sth, sybaction, column, attr) ? &sv_yes : &sv_no;
+    ST(0) = syb_ct_data_info(sth, imp_sth, sybaction, column, attr) ? &PL_sv_yes : &PL_sv_no;
     }
 
 void
@@ -138,7 +138,7 @@ ct_send_data(sth, buffer, size)
     syb_ct_send_data    =  1
     CODE:
     D_imp_sth(sth);
-    ST(0) = syb_ct_send_data(sth, imp_sth, buffer, size) ? &sv_yes : &sv_no;
+    ST(0) = syb_ct_send_data(sth, imp_sth, buffer, size) ? &PL_sv_yes : &PL_sv_no;
 
 void
 ct_prepare_send(sth)
@@ -147,7 +147,7 @@ ct_prepare_send(sth)
     syb_ct_prepare_send   = 1
     CODE:
     D_imp_sth(sth);
-    ST(0) = syb_ct_prepare_send(sth, imp_sth) ? &sv_yes : &sv_no;
+    ST(0) = syb_ct_prepare_send(sth, imp_sth) ? &PL_sv_yes : &PL_sv_no;
 
 void
 ct_finish_send(sth)
@@ -156,7 +156,7 @@ ct_finish_send(sth)
     syb_ct_finish_send    = 1
     CODE:
     D_imp_sth(sth);
-    ST(0) = syb_ct_finish_send(sth, imp_sth) ? &sv_yes : &sv_no;
+    ST(0) = syb_ct_finish_send(sth, imp_sth) ? &PL_sv_yes : &PL_sv_no;
 
 void
 syb_describe(sth, doAssoc = 0)
