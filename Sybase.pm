@@ -1,7 +1,7 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.111 2010/11/06 13:49:49 mpeppler Exp $
+# $Id: Sybase.pm,v 1.112 2011/04/25 08:59:17 mpeppler Exp $
 
-# Copyright (c) 1996-2008   Michael Peppler
+# Copyright (c) 1996-2011   Michael Peppler
 #
 #   You may distribute under the terms of either the GNU General Public
 #   License or the Artistic License, as specified in the Perl README file.
@@ -25,8 +25,8 @@
 
 	$hostname  = Sys::Hostname::hostname();
 	$init_done = 0;
-	$VERSION   = '1.11';
-	my $Revision = substr( q$Revision: 1.111 $, 10 );
+	$VERSION   = '1.12';
+	my $Revision = substr( q$Revision: 1.112 $, 10 );
 
 	require_version DBI 1.30;
 

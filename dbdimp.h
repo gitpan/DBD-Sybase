@@ -1,7 +1,7 @@
 /*
- $Id: dbdimp.h,v 1.42 2010/11/06 13:48:42 mpeppler Exp $
+ $Id: dbdimp.h,v 1.43 2011/04/25 08:59:17 mpeppler Exp $
 
- Copyright (c) 1997-2008  Michael Peppler
+ Copyright (c) 1997-2011  Michael Peppler
 
  You may distribute under the terms of either the GNU General Public
  License or the Artistic License, as specified in the Perl README file.
@@ -144,6 +144,7 @@ typedef struct phs_st {
 	SV *sv;
 	int sv_type;
 	bool is_inout;
+	bool is_boundinout;
 	IV maxlen;
 
 	char *sv_buf;
@@ -155,6 +156,13 @@ typedef struct phs_st {
 	char name[1]; /* struct is malloc'd bigger as needed	*/
 
 } phs_t;
+
+/* struct to store pointer to output parameter and returned length */
+typedef struct boundparams_st {
+    phs_t *phs;
+    int len;
+} boundparams_t;
+
 
 /* Define sth implementor data structure */
 struct imp_sth_st {

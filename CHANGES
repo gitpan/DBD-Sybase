@@ -1,5 +1,10 @@
-$Id: CHANGES,v 1.84 2010/11/06 14:32:36 mpeppler Exp $
+$Id: CHANGES,v 1.85 2011/04/25 08:59:17 mpeppler Exp $
 
+Release 1.12
+
+    Bug/Typo/Compatibility fixes with various versions of OpenClient.
+    Experimental: Handle in/out parameters (Merijn Broeren)
+    
 Release 1.11
 
     Remove reliance on PERL_POLLUTE.

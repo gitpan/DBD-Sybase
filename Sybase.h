@@ -1,6 +1,6 @@
-/* $Id: Sybase.h,v 1.18 2010/11/06 13:49:10 mpeppler Exp $
+/* $Id: Sybase.h,v 1.19 2011/04/25 08:59:17 mpeppler Exp $
 
-   Copyright (c) 1997 - 2007 Michael Peppler
+   Copyright (c) 1997 - 2011 Michael Peppler
 
    You may distribute under the terms of either the GNU General Public
    License or the Artistic License, as specified in the Perl README file.

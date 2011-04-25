@@ -1,6 +1,6 @@
-/* $Id: dbdimp.c,v 1.106 2010/11/06 13:48:24 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.110 2011/04/25 09:36:35 mpeppler Exp $
 
- Copyright (c) 1997-2008  Michael Peppler
+ Copyright (c) 1997-2011  Michael Peppler
 
  You may distribute under the terms of either the GNU General Public
  License or the Artistic License, as specified in the Perl README file.
@@ -1089,7 +1089,7 @@ int syb_db_login(SV *dbh, imp_dbh_t *imp_dbh, char *dsn, char *uid, char *pwd,
 			= fetchAttrib(attribs, "syb_disconnect_in_child");
 	imp_dbh->host[0] = 0;
 	imp_dbh->port[0] = 0;
-	imp_dbh->enable_utf8 = fetchSvAttrib(attribs, "syb_enable_utf8");
+	imp_dbh->enable_utf8 = fetchAttrib(attribs, "syb_enable_utf8");
 
 	imp_dbh->blkLogin[0] = 0;
 
@@ -2233,7 +2233,7 @@ int syb_db_STORE_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv, SV *valuesv) {
 		return TRUE;
 	}
 	if (kl == 15 && strEQ(key, "syb_err_handler")) {
-		if (valuesv == &PL_sv_undef) {
+		if (!SvOK(valuesv)) {
 			imp_dbh->err_handler = NULL;
 		} else if (imp_dbh->err_handler == (SV*) NULL) {
 			imp_dbh->err_handler = newSVsv(valuesv);
@@ -2252,7 +2252,7 @@ int syb_db_STORE_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv, SV *valuesv) {
 		return TRUE;
 	}
 	if (kl == 16 && strEQ(key, "syb_row_callback")) {
-		if (valuesv == &PL_sv_undef) {
+		if (!SvOK(valuesv)) {
 			imp_dbh->row_cb = NULL;
 		} else if (imp_dbh->row_cb == (SV*) NULL) {
 			imp_dbh->row_cb = newSVsv(valuesv);
@@ -2879,7 +2879,7 @@ int syb_st_prepare(SV *sth, imp_sth_t *imp_sth, char *statement, SV *attribs) {
 	}
 
 	if (imp_sth->statement != NULL)
-		safefree(imp_sth->statement);
+		Safefree(imp_sth->statement);
 	imp_sth->statement = NULL;
 	dbd_preparse(imp_sth, statement);
 	imp_dbh->sql = imp_sth->statement;
@@ -2964,18 +2964,18 @@ static int syb_st_describe_proc(imp_sth_t *imp_sth, char *statement) {
 
 	tok = strtok(buff, " \n\t");
 	if (strncasecmp(tok, "exec", 4)) {
-		safefree(buff);
+		Safefree(buff);
 		return 0; /* it's gotta start with exec(ute) */
 	}
 	tok = strtok(NULL, " \n\t"); /* this is the proc name */
 	if (!tok || !*tok) {
 		warn(
 				"DBD::Sybase: describe_proc: didn't get a proc name in EXEC statement\n");
-		safefree(buff);
+		Safefree(buff);
 		return 0;
 	}
 	strcpy(imp_sth->proc, tok);
-	safefree(buff);
+	Safefree(buff);
 	return 1;
 }
 
@@ -3825,12 +3825,19 @@ int syb_st_execute(SV *sth, imp_sth_t *imp_sth) {
 
 	if (!imp_sth->exec_done) {
 		/* bind parameters if there are any */
+		CS_INT rows;
 		int i;
 		SV **phs_svp;
 		char namebuf[30];
 		int namelen;
 		phs_t *phs;
 		int num_params = (int) DBIc_NUM_PARAMS(imp_sth);
+
+		int foundOutput = 0;
+		boundparams_t *params = 0;
+
+		/* malloc the maximum possible size for output parameters */
+		params = malloc(sizeof(boundparams_t) * num_params );
 
 		for (i = 1; i <= num_params; ++i) {
 			sprintf(namebuf, ":p%d", i);
@@ -3840,13 +3847,65 @@ int syb_st_execute(SV *sth, imp_sth_t *imp_sth) {
 				croak("Can't bind unknown placeholder '%s'", namebuf);
 			phs = (phs_t*) SvPVX(*phs_svp); /* placeholder struct	*/
 
-			if (!_dbd_rebind_ph(sth, imp_sth, phs, 0))
+			/* if the parameter is an output and it is bound as an inout,
+			 * store the pointer, so we can use it for ct_bind */
+			if ( phs->is_inout && phs->is_boundinout ) {
+				params[foundOutput].phs = phs;		
+				foundOutput++;
+			}
+
+			if (!_dbd_rebind_ph(sth, imp_sth, phs, 0)) {
+				free(params);
 				return -2;
+			}
 		}
 
 		if (cmd_execute(sth, imp_sth) != 0) {
+			free(params);
 			return -2;
 		}
+
+		/* if we have output parameters, fetch the result */
+		if( foundOutput > 0 ) {				
+			while (ct_results(imp_sth->cmd, &restype) == CS_SUCCEED && restype != CS_CMD_DONE) {
+				if (restype == CS_CMD_FAIL) {
+					free(params);
+					return -2;
+				}
+				/* ignore restype == CS_STATUS_RESULT */
+				if (restype == CS_PARAM_RESULT) {
+					/* Since we have a parameter result, bind all the output parameters */
+					for (i = 0; i < foundOutput; i++) {
+						phs = params[i].phs;
+						CS_DATAFMT datafmt;
+						/* find the maxlenght through ct_describe */ 
+						if( ct_describe(imp_sth->cmd, i+1, &datafmt) != CS_SUCCEED)
+							croak("ct_describe() failed");
+
+						phs->datafmt.maxlength = datafmt.maxlength;
+
+						/* Force to string with SvPOK_only (maybe use SvPV_force ). */
+						SvPOK_only(phs->sv);
+						/* grow the output SV to the max length fetch will return */
+						SvGROW(phs->sv, phs->datafmt.maxlength );
+
+						/* bind the SV through pointer to the physical string in the SV,
+						 * store the returned length in the params array for adjustment after fetch */
+						if( ct_bind(imp_sth->cmd, i+1, &phs->datafmt, SvPVX(phs->sv), &params[i].len, 0) != CS_SUCCEED )
+							syb_set_error(imp_dbh, -1, "ct_bind() for output param failed!");
+					}
+				}
+
+				/* fetch all results */
+				while((ct_fetch(imp_sth->cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows)) == CS_SUCCEED) {
+				}
+			}
+			/* set the output SV to the correct lenght */
+			for (i = 0; i < foundOutput; i++) {
+				SvCUR_set(params[i].phs->sv, params[i].len);
+			}
+		}
+		free(params);
 	}
 
 	restype = st_next_result(sth, imp_sth);
@@ -3932,7 +3991,7 @@ AV * syb_st_fetch(SV *sth, imp_sth_t *imp_sth) {
 	dTHX;
 	D_imp_dbh_from_sth;
 	CS_COMMAND *cmd = imp_sth->cmd;
-	int num_fields;
+	CS_INT num_fields;
 	int ChopBlanks;
 	int i;
 	AV *av;
@@ -3947,13 +4006,20 @@ AV * syb_st_fetch(SV *sth, imp_sth_t *imp_sth) {
 		return Nullav;
 	}
 
+	/*
+	** Find out how many columns there are in this result set.
+	*/
+	retcode = ct_res_info(cmd, CS_NUMDATA, &num_fields, CS_UNUSED, NULL);
+	if (retcode != CS_SUCCEED)
+	{
+		croak("    syb_st_fetch(): ct_res_info() failed");
+	}
+
 	ChopBlanks = DBIc_has(imp_sth, DBIcf_ChopBlanks);
 
 	TryAgain: retcode = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED,
 			&rows_read);
 
-	/* Use the actual number of fields... XXX */
-	num_fields = DBIc_NUM_FIELDS(imp_sth);
 	av = DBIc_DBISTATE(imp_dbh)->get_fbav(imp_sth);
 
 	if (DBIc_DBISTATE(imp_dbh)->debug >= 4) {
@@ -4013,8 +4079,11 @@ AV * syb_st_fetch(SV *sth, imp_sth_t *imp_sth) {
 					}
 #if defined(DBD_CAN_HANDLE_UTF8)
 					if (imp_dbh->enable_utf8
-							&& (imp_sth->coldata[i].realType == CS_UNICHAR_TYPE ||
-									imp_sth->coldata[i].realType == CS_UNITEXT_TYPE)) {
+							&& (imp_sth->coldata[i].realType == CS_UNICHAR_TYPE
+#if defined(CS_UNITEXT_TYPE)
+								||	imp_sth->coldata[i].realType == CS_UNITEXT_TYPE
+#endif
+							)) {
 						U8 *value = SvPV_nolen(sv);
 						STRLEN len = SvLEN(sv);
 
@@ -4350,7 +4419,7 @@ void syb_st_destroy(SV *sth, imp_sth_t *imp_sth) {
 			PerlIO_printf(DBIc_LOGPIO(imp_dbh),
 					"    syb_st_destroy(): freeing imp_sth->statement\n");
 		}
-		safefree(imp_sth->statement);
+		Safefree(imp_sth->statement);
 		imp_sth->statement = NULL;
 		imp_dbh->sql = NULL;
 	}
@@ -5217,7 +5286,7 @@ static int _dbd_rebind_ph(SV *sth, imp_sth_t *imp_sth, phs_t *phs, int maxlen) {
 	phs->datafmt.datatype = datatype;
 
 	if (free_value && value != NULL)
-		safefree(value);
+		Safefree(value);
 
 	return (rc == CS_SUCCEED);
 }
@@ -5273,6 +5342,9 @@ int syb_bind_ph(SV *sth, imp_sth_t *imp_sth, SV *ph_namesv, SV *newvalue,
 		croak("Can't bind unknown placeholder '%s'", name);
 	phs = (phs_t*) SvPVX(*phs_svp); /* placeholder struct	*/
 
+	if (DBIc_DBISTATE(imp_sth)->debug >= 3)
+		PerlIO_printf(DBIc_LOGPIO(imp_sth), "    parameter is output [%s]\n", is_inout ? "true" : "false" );
+
 	if (phs->sv == &PL_sv_undef) { /* first bind for this placeholder      */
 		phs->sql_type = (sql_type) ? sql_type : SQL_CHAR;
 		phs->ftype = map_sql_types(phs->sql_type);
@@ -5317,6 +5389,12 @@ int syb_bind_ph(SV *sth, imp_sth_t *imp_sth, SV *ph_namesv, SV *newvalue,
 		if (phs->sv == &PL_sv_undef) /* (first time bind) */
 			phs->sv = newSV(0);
 		sv_setsv(phs->sv, newvalue);
+		phs->is_boundinout = 0;
+	} else {
+		phs->sv = SvREFCNT_inc(newvalue);             /* Take a reference to the input variable */
+		phs->is_boundinout = 1;
+		if (DBIc_DBISTATE(imp_sth)->debug >= 3)
+			PerlIO_printf(DBIc_LOGPIO(imp_sth), "    parameter is bound as inout\n");
 	}
 
 	/* BLK binding done at execute time, in a loop */
@@ -5325,6 +5403,7 @@ int syb_bind_ph(SV *sth, imp_sth_t *imp_sth, SV *ph_namesv, SV *newvalue,
 
 	return 1; /* _dbd_rebind_ph(sth, imp_sth, phs, 0); */
 }
+
 
 static CS_RETCODE fetch_data(imp_dbh_t *imp_dbh, CS_COMMAND *cmd) {
 	dTHX;
@@ -5719,11 +5798,11 @@ static int getTableName(char *statement, char *table, int maxwidth) {
 	if (!p || !*p)
 		goto FAIL;
 	strncpy(table, p, maxwidth);
-	safefree(ptr);
+	Safefree(ptr);
 
 	return 1;
 
-	FAIL: safefree(ptr);
+	FAIL: Safefree(ptr);
 	return 0;
 }
 
