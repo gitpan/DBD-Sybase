@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               DBD-Sybase
-version:            1.12
+version:            1.13
 abstract:           DBI driver for Sybase datasources
 author:
     - Michael Peppler (mpeppler@peppler.org)

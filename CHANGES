@@ -1,4 +1,8 @@
-$Id: CHANGES,v 1.85 2011/04/25 08:59:17 mpeppler Exp $
+$Id: CHANGES,v 1.86 2011/09/06 17:26:16 mpeppler Exp $
+
+Release 1.13
+
+    Fix for incorrect UTF8 handling when retrieving UNICODE data (Jean-Pierre Rupp).
 
 Release 1.12
 

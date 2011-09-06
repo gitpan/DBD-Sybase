@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.110 2011/04/25 09:36:35 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.111 2011/09/06 17:25:46 mpeppler Exp $
 
  Copyright (c) 1997-2011  Michael Peppler
 
@@ -933,6 +933,9 @@ void syb_init(dbistate_t *dbistate) {
 		}
 	}
 
+	/* Set default charset to utf8. The charset can still be overridden
+	 * via the charset=xxxx connection attribute.
+	 */
 	if (retcode == CS_SUCCEED) {
 		if ((retcode = cs_locale(context, CS_SET, locale, CS_SYB_CHARSET,
 				"utf8", CS_NULLTERM, NULL)) != CS_SUCCEED) {
@@ -4085,7 +4088,7 @@ AV * syb_st_fetch(SV *sth, imp_sth_t *imp_sth) {
 #endif
 							)) {
 						U8 *value = SvPV_nolen(sv);
-						STRLEN len = SvLEN(sv);
+						STRLEN len = SvCUR(sv);
 
 						SvUTF8_off(sv);
 						if (is_high_bit_set(value, len) && is_utf8_string(value, len)) {

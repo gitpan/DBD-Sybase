@@ -1,4 +1,4 @@
-$Id: BUGS,v 1.2 2010/11/06 14:31:05 mpeppler Exp $
+$Id: BUGS,v 1.3 2011/09/06 17:26:01 mpeppler Exp $
 
 Known problems:
 --------------
@@ -16,4 +16,4 @@ and 12.0.0.1 ESD#3 on Solaris.)
 On ASE 11.9.2/linux $sth->execute() calls that follow the call that 
 fails simply hang.
 
-t/utf8.t fails sometimes for (so far) unknown reasons.
+
