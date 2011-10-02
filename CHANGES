@@ -1,4 +1,12 @@
-$Id: CHANGES,v 1.86 2011/09/06 17:26:16 mpeppler Exp $
+$Id: CHANGES,v 1.88 2011/10/02 15:03:17 mpeppler Exp $
+
+Release 1.14
+
+    Fix bad size handling for unicode data. 
+    Remove default charset setting to utf8 (this had been done in 1.11 as part of
+    improved utf8 handling, but has negative side-effects. If unicode handling is needed
+    then set "charset=utf8" as part of the connection string.
+    Enforce the fact that utf8/unicode handling only works with OpenClient 15.x or later.
 
 Release 1.13
 

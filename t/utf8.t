@@ -1,6 +1,6 @@
 #!perl
 #
-# $Id: utf8.t,v 1.2 2010/11/06 14:30:40 mpeppler Exp $
+# $Id: utf8.t,v 1.5 2011/10/02 15:01:50 mpeppler Exp $
 
 use lib 't';
 use _test;
@@ -28,21 +28,23 @@ use vars qw($Pwd $Uid $Srv $Db);
 ( $Uid, $Pwd, $Srv, $Db ) = _test::get_info();
 
 my $dbh = DBI->connect(
-    "dbi:Sybase:server=$Srv;database=$Db", $Uid, $Pwd,
+    "dbi:Sybase:server=$Srv;database=$Db;charset=utf8", $Uid, $Pwd,
     { PrintError => 1 }
 );
+$dbh->{syb_enable_utf8} = 1;
 
-unless ( $dbh->{syb_server_version} ge '15' ) {
-    plan skip_all => 'This test requires ASE 15';
+
+unless ( $dbh->{syb_server_version} ge '15' && $dbh->{syb_enable_utf8}) {
+    plan skip_all => 'This test requires ASE 15 or later, and OpenClient 15.x or later';
 }
 
 plan tests => 11;
 
-$dbh->do("create table #utf8test (uv univarchar(250), ut unitext)");
-$dbh->{syb_enable_utf8} = 1;
+$dbh->do("create table #utf8test (uv univarchar(510), ut unitext)");
 
 my $ascii = 'Some text';
-my $utf8 = "\x{263A} - smiley1 - \x{263B} - smiley2";
+#my $utf8 = "पट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट्टपट";
+my $utf8 = "\x{263A} - smiley1 - \x{263B} - smiley2" x 10;
 
 {
     my $quoted = $dbh->quote($ascii);
@@ -129,7 +131,7 @@ $dbh->{syb_enable_utf8} = 0;
 
 {
     my $dbh2 = DBI->connect(
-        "dbi:Sybase:server=$Srv;database=$Db",
+        "dbi:Sybase:server=$Srv;database=$Db;charset=utf8",
         $Uid, $Pwd, {
             PrintError      => 1,
             syb_enable_utf8 => 1
@@ -167,3 +169,4 @@ $dbh->{syb_enable_utf8} = 0;
         'ut column was returned with utf8 flag on (syb_enable_utf8 passed to connect)'
     );
 }
+

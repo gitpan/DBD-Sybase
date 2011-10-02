@@ -1,5 +1,5 @@
 # -*-Perl-*-
-# $Id: Sybase.pm,v 1.113 2011/09/06 17:26:38 mpeppler Exp $
+# $Id: Sybase.pm,v 1.115 2011/10/02 14:55:38 mpeppler Exp $
 
 # Copyright (c) 1996-2011   Michael Peppler
 #
@@ -25,8 +25,8 @@
 
 	$hostname  = Sys::Hostname::hostname();
 	$init_done = 0;
-	$VERSION   = '1.13';
-	my $Revision = substr( q$Revision: 1.113 $, 10 );
+	$VERSION   = '1.14';
+	my $Revision = substr( q$Revision: 1.115 $, 10 );
 
 	require_version DBI 1.30;
 
@@ -733,6 +733,7 @@ The default server is I<SYBASE>, or the value of the I<$DSQUERY> environment
 variable, if it is set.
 
 =item host
+
 =item port
 
 If you built DBD::Sybase with OpenClient 12.5.1 or later, then you can
@@ -774,6 +775,12 @@ Specify the character set that the client uses.
 
      $dbh = DBI->connect("dbi:Sybase:charset=iso_1",
 			 $user, $passwd);
+
+The default charset used depends on the locale that the application runs
+in. If you wish to interact with unicode varaiables (see syb_enable_utf8, below) then
+you should set charset=utf8. Note however that this means that Sybase will expect all
+data sent to it for char/varchar columns to be encoded in utf8 (e.g. sending iso8859-1 characters
+like e-grave, etc).
 
 =item language
 
@@ -1320,6 +1327,8 @@ If this attribute is set then DBD::Sybase will convert UNIVARCHAR, UNICHAR,
 and UNITEXT data to Perl's internal utf-8 encoding when they are
 retrieved. Updating a unicode column will cause Sybase to convert any incoming
 data from utf-8 to its internal utf-16 encoding.
+
+This feature requires OpenClient 15.x to work.
 
 Default: off
 

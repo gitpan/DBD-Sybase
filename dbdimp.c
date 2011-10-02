@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.111 2011/09/06 17:25:46 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.113 2011/10/02 14:54:07 mpeppler Exp $
 
  Copyright (c) 1997-2011  Michael Peppler
 
@@ -78,6 +78,16 @@
 #if defined(CS_VERSION_150)
 #if !defined BLK_VERSION_150
 #define BLK_VERSION_150	BLK_VERSION_125
+#endif
+#endif
+#if defined(CS_VERSION_155)
+#if !defined BLK_VERSION_155
+#define BLK_VERSION_155	BLK_VERSION_150
+#endif
+#endif
+#if defined(CS_VERSION_157)
+#if !defined BLK_VERSION_157
+#define BLK_VERSION_157	BLK_VERSION_155
 #endif
 #endif
 #if !defined(CS_LONGCHAR_TYPE)
@@ -622,12 +632,16 @@ static CS_INT get_cwidth(CS_DATAFMT *column) {
 	case CS_VARCHAR_TYPE:
 	case CS_TEXT_TYPE:
 	case CS_IMAGE_TYPE:
-		len = column->maxlength;
+        len = column->maxlength;
 		break;
 
 	case CS_BINARY_TYPE:
 	case CS_VARBINARY_TYPE:
 	case CS_LONGBINARY_TYPE:
+//#if defined(CS_UNICHAR_TYPE)
+//	case CS_UNICHAR_TYPE:
+//	case CS_UNITEXT_TYPE:
+//#endif
 		len = (2 * column->maxlength) + 2;
 		break;
 
@@ -936,12 +950,12 @@ void syb_init(dbistate_t *dbistate) {
 	/* Set default charset to utf8. The charset can still be overridden
 	 * via the charset=xxxx connection attribute.
 	 */
-	if (retcode == CS_SUCCEED) {
+/*	if (retcode == CS_SUCCEED) {
 		if ((retcode = cs_locale(context, CS_SET, locale, CS_SYB_CHARSET,
 				"utf8", CS_NULLTERM, NULL)) != CS_SUCCEED) {
 			warn("cs_locale(CS_SYB_CHARSET) failed");
 		}
-	}
+	}*/
 
 	if (retcode == CS_SUCCEED) {
 		CS_INT type = CS_DATES_SHORT;
@@ -1093,6 +1107,13 @@ int syb_db_login(SV *dbh, imp_dbh_t *imp_dbh, char *dsn, char *uid, char *pwd,
 	imp_dbh->host[0] = 0;
 	imp_dbh->port[0] = 0;
 	imp_dbh->enable_utf8 = fetchAttrib(attribs, "syb_enable_utf8");
+#if !defined(DBD_CAN_HANDLE_UTF8)
+	if (imp_dbh->enable_utf8) {
+		warn("The current version of OpenClient can't handle utf8 data.");
+	}
+	imp_dbh->enable_utf8 = 0;
+#endif
+
 
 	imp_dbh->blkLogin[0] = 0;
 
@@ -2246,6 +2267,10 @@ int syb_db_STORE_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv, SV *valuesv) {
 		return TRUE;
 	}
 	if (kl == 15 && strEQ(key, "syb_enable_utf8")) {
+#if !defined(DBD_CAN_HANDLE_UTF8)
+		warn("The current version of OpenClient can't handle utf8 data.");
+		return FALSE;
+#else
 		on = SvTRUE(valuesv);
 		if (on) {
 			imp_dbh->enable_utf8 = 1;
@@ -2253,6 +2278,7 @@ int syb_db_STORE_attrib(SV *dbh, imp_dbh_t *imp_dbh, SV *keysv, SV *valuesv) {
 			imp_dbh->enable_utf8 = 0;
 		}
 		return TRUE;
+#endif
 	}
 	if (kl == 16 && strEQ(key, "syb_row_callback")) {
 		if (!SvOK(valuesv)) {
@@ -3180,6 +3206,9 @@ static CS_RETCODE describe(SV *sth, imp_sth_t *imp_sth, int restype) {
 
 		case CS_TEXT_TYPE:
 		case CS_IMAGE_TYPE:
+#if defined(CS_UNITEXT_TYPE)
+		case CS_UNITEXT_TYPE:
+#endif
 			New(902, imp_sth->coldata[i].value.c,
 					imp_sth->datafmt[i].maxlength, char);
 			imp_sth->datafmt[i].format = CS_FMT_UNUSED; /*CS_FMT_NULLTERM;*/
@@ -3696,13 +3725,17 @@ static int syb_blk_execute(imp_dbh_t *imp_dbh, imp_sth_t *imp_sth, SV *sth) {
 			case CS_TEXT_TYPE:
 			case CS_IMAGE_TYPE:
 			case CS_CHAR_TYPE:
-#if defined(CS_UNICHAR_TYPE)
-			case CS_UNICHAR_TYPE:
-#endif
 				/* For these types send data "as is" */
 				ptr = imp_sth->coldata[i].ptr;
 				imp_sth->coldata[i].valuelen = slen;
 				break;
+#if defined(CS_UNICHAR_TYPE)
+			case CS_UNICHAR_TYPE:
+				/* For these types send data "as is" */
+				ptr = imp_sth->coldata[i].ptr;
+				imp_sth->coldata[i].valuelen = slen * 2;
+				break;
+#endif
 			default:
 				/* for all others, call cs_convert() before sending */
 				if (!imp_sth->coldata[i].v_alloc) {

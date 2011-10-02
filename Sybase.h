@@ -1,4 +1,4 @@
-/* $Id: Sybase.h,v 1.19 2011/04/25 08:59:17 mpeppler Exp $
+/* $Id: Sybase.h,v 1.21 2011/10/02 14:53:49 mpeppler Exp $
 
    Copyright (c) 1997 - 2011 Michael Peppler
 
@@ -52,6 +52,15 @@
 #if defined(CS_CURRENT_VERSION)
 #define CTLIB_VERSION	CS_CURRENT_VERSION
 #else
+#if defined(CS_VERSION_157)
+#define CTLIB_VERSION   CS_VERSION_157
+#else 
+#if defined(CS_VERSION_155)
+#define CTLIB_VERSION   CS_VERSION_155
+#else 
+#if defined(CS_VERSION_150)
+#define CTLIB_VERSION   CS_VERSION_150
+#else 
 #if defined(CS_VERSION_125)
 #define CTLIB_VERSION   CS_VERSION_125
 #else 
@@ -66,8 +75,11 @@
 #endif
 #endif
 #endif
+#endif
+#endif
+#endif
 
-#if defined(CS_UNICHAR_TYPE)
+#if defined(CS_UNICHAR_TYPE) && defined(CS_VERSION_150)
 #if defined (is_utf8_string)
 #define DBD_CAN_HANDLE_UTF8
 #endif
