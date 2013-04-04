@@ -1,4 +1,4 @@
-/* $Id: dbdimp.c,v 1.113 2011/10/02 14:54:07 mpeppler Exp $
+/* $Id: dbdimp.c,v 1.115 2013/04/03 20:16:20 mpeppler Exp $
 
  Copyright (c) 1997-2011  Michael Peppler
 
@@ -1124,7 +1124,7 @@ int syb_db_login(SV *dbh, imp_dbh_t *imp_dbh, char *dsn, char *uid, char *pwd,
 	if (strchr(dsn, '=')) {
 		extractFromDsn("server=", dsn, imp_dbh->server, 64);
 		extractFromDsn("charset=", dsn, imp_dbh->charset, 64);
-		extractFromDsn("database=", dsn, imp_dbh->database, 36);
+		extractFromDsn("database=", dsn, imp_dbh->database, 260);
 		extractFromDsn("packetSize=", dsn, imp_dbh->packetSize, 64);
 		extractFromDsn("language=", dsn, imp_dbh->language, 64);
 		extractFromDsn("interfaces=", dsn, imp_dbh->ifile, 255);
@@ -1598,7 +1598,7 @@ static int syb_db_use(imp_dbh_t *imp_dbh, CS_CONNECTION *connection) {
 	else
 		db = imp_dbh->database;
 
-	sprintf(statement, "use %s", db);
+	sprintf(statement, "use [%s]", db);
 
 	if (DBIc_DBISTATE(imp_dbh)->debug >= 3)
 		PerlIO_printf(DBIc_LOGPIO(imp_dbh),
@@ -3912,8 +3912,8 @@ int syb_st_execute(SV *sth, imp_sth_t *imp_sth) {
 				if (restype == CS_PARAM_RESULT) {
 					/* Since we have a parameter result, bind all the output parameters */
 					for (i = 0; i < foundOutput; i++) {
-						phs = params[i].phs;
 						CS_DATAFMT datafmt;
+						phs = params[i].phs;
 						/* find the maxlenght through ct_describe */ 
 						if( ct_describe(imp_sth->cmd, i+1, &datafmt) != CS_SUCCEED)
 							croak("ct_describe() failed");
@@ -4621,6 +4621,7 @@ int syb_ct_finish_send(SV *sth, imp_sth_t *imp_sth) {
 
 int syb_ct_send_data(SV *sth, imp_sth_t *imp_sth, char *buffer, int size) {
 	dTHX;
+	D_imp_dbh_from_sth;
 
 	if (DBIc_DBISTATE(imp_sth)->debug >= 4)
 		PerlIO_printf(DBIc_LOGPIO(imp_sth),
@@ -4667,17 +4668,27 @@ int syb_ct_data_info(SV *sth, imp_sth_t *imp_sth, int action, int column,
 	if (action == CS_SET) {
 		column = CS_UNUSED;
 	} else {
-		if (DBIc_DBISTATE(imp_dbh)->debug >= 4)
+				if (DBIc_DBISTATE(imp_dbh)->debug >= 4)
 			PerlIO_printf(DBIc_LOGPIO(imp_dbh),
 					"    ct_data_info(): get IODESC for column %d\n", column);
 	}
 
 	ret = ct_data_info(cmd, action, column, &imp_dbh->iodesc);
 
-	if (action == CS_GET && DBIc_DBISTATE(imp_dbh)->debug >= 4) {
-		PerlIO_printf(DBIc_LOGPIO(imp_dbh),
+	if (action == CS_GET) {
+		if (imp_dbh->iodesc.textptrlen == 0) {
+			DBIh_SET_ERR_CHAR(sth, (imp_xxh_t*)imp_sth, Nullch, 0, "ct_data_info(): text pointer is not set or is undefined. The text/image column may be uninitialized in the database for this row.", Nullch, Nullch);
+
+			/*warn("ct_data_info(): text pointer is not set or is undefined. The text/image column may be uninitialized in the database for this row.");*/
+
+			return 0;
+		}
+
+		if (DBIc_DBISTATE(imp_dbh)->debug >= 4) {
+			PerlIO_printf(DBIc_LOGPIO(imp_dbh),
 				"    ct_data_info(): ret = %d, total_txtlen = %d\n", ret,
 				imp_dbh->iodesc.total_txtlen);
+		}
 	} else if (DBIc_DBISTATE(imp_dbh)->debug >= 4) {
 		PerlIO_printf(DBIc_LOGPIO(imp_dbh), "    ct_data_info(): ret = %d\n",
 				ret);

@@ -1,5 +1,5 @@
 /*
- $Id: dbdimp.h,v 1.43 2011/04/25 08:59:17 mpeppler Exp $
+ $Id: dbdimp.h,v 1.44 2013/04/03 20:16:20 mpeppler Exp $
 
  Copyright (c) 1997-2011  Michael Peppler
 
@@ -83,7 +83,7 @@ struct imp_dbh_st {
 	char timeout[64];
 	char scriptName[255];
 	char hostname[255];
-	char database[36];
+	char database[260];
 	char curr_db[36];
 	char tdsLevel[30];
 	char encryptPassword[10];

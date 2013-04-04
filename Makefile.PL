@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.47 2010/11/06 14:28:11 mpeppler Exp $
+# $Id: Makefile.PL,v 1.48 2012/10/26 19:11:54 mpeppler Exp $
 
 use ExtUtils::MakeMaker;
 
@@ -129,12 +129,21 @@ sub configure {
 
 	# System 12.0 has a different directory structure...
 	if ( defined( $ENV{SYBASE_OCS} ) ) {
-		$SYBASE .= "/$ENV{SYBASE_OCS}";
+		# if $SYBASE_OCS is an absolute path, then use that
+		if ($ENV{SYBASE_OCS} =~ m!^/!) {
+			$SYBASE = $ENV{SYBASE_OCS};
+		} else {
+		  $SYBASE .= "/$ENV{SYBASE_OCS}";
+		}
 	}
 
 	my $libfound = 0;
 	my $libsub   = '';
-	foreach $libdir ( 'lib', 'lib64' ) {
+  my @libdir = ( 'lib', 'lib64' );
+  if ($^O =~ /win/i) {
+    @libdir = ( 'dll' );
+  }
+	foreach $libdir ( @libdir ) {
 		if ( -d "$SYBASE/$libdir" ) {
 			if ( checkLib($SYBASE) ) {
 				$libfound = 1;
@@ -174,8 +183,14 @@ sub configure {
 	#    print "OS = $^O\n";
 
 	if ( $^O eq 'MSWin32' ) {
-		$lib_string =
-"-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
+    if ($version ge '15') {
+      $lib_string =
+  "-L$SYBASE/lib -llibsybct.lib -llibsybcs.lib -llibsybtcl.lib -llibsybcomn.lib -llibsybintl.lib -llibsybblk.lib $attr{EXTRA_LIBS} -lm";
+    }
+    else {
+      $lib_string =
+  "-L$SYBASE/lib -llibct.lib -llibcs.lib -llibtcl.lib -llibcomn.lib -llibintl.lib -llibblk.lib $attr{EXTRA_LIBS} -lm";
+    }
 	}
 	elsif ( $^O eq 'VMS' ) {
 		$lib_string =
@@ -347,6 +362,7 @@ sub getLibVersion {
 		}
 	}
 	close(IN);
+
 	if ( !$version ) {
 		print "Unknown Client Library version - assuming FreeTDS.\n";
 	}
